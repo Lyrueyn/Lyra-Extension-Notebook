@@ -161,22 +161,32 @@
       el = document.createElement("h" + level);
     } else if (type === "bulletList" || type === "orderedList") {
       el = document.createElement(type === "bulletList" ? "ul" : "ol");
-      for (const item of block.items || []) {
+      for (const rawItem of block.items || []) {
+        const item = Array.isArray(rawItem) ? { children: rawItem, blocks: [] } : (rawItem || {});
         const li = document.createElement("li");
-        li.appendChild(inlineToFragment(item));
+        li.appendChild(inlineToFragment(item.children || []));
+        for (const nested of item.blocks || []) {
+          if (nested && (nested.type === "bulletList" || nested.type === "orderedList" || nested.type === "taskList"))
+            li.appendChild(blockToElement(nested));
+        }
         el.appendChild(li);
       }
       return el;
     } else if (type === "taskList") {
       el = document.createElement("ul");
       el.className = "task-list";
-      for (const item of block.items || []) {
+      for (const rawItem of block.items || []) {
+        const item = Array.isArray(rawItem) ? { checked: false, children: rawItem, blocks: [] } : (rawItem || {});
         const li = document.createElement("li");
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = !!item.checked;
         li.appendChild(cb);
         li.appendChild(inlineToFragment(item.children || []));
+        for (const nested of item.blocks || []) {
+          if (nested && (nested.type === "bulletList" || nested.type === "orderedList" || nested.type === "taskList"))
+            li.appendChild(blockToElement(nested));
+        }
         el.appendChild(li);
       }
       return el;
@@ -238,6 +248,23 @@
     return out;
   }
 
+  function parseListItem(li) {
+    const children = [];
+    const blocks = [];
+    for (const child of li.childNodes) {
+      const tag = child.nodeType === Node.ELEMENT_NODE ? (child.tagName || "").toUpperCase() : "";
+      if (tag === "UL" || tag === "OL") {
+        const nested = blockFromElement(child);
+        if (nested) blocks.push(nested);
+      } else if (tag === "INPUT") {
+        continue;
+      } else {
+        for (const token of parseInline(child, [])) children.push(token);
+      }
+    }
+    return { children, blocks };
+  }
+
   function blockFromElement(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) {
       if (el && el.nodeType === Node.TEXT_NODE && el.nodeValue.trim()) {
@@ -252,18 +279,25 @@
     }
     if (tag === "UL" || tag === "OL") {
       const isTask = el.classList.contains("task-list") || !!el.querySelector("input[type=checkbox]");
-      if (isTask) {
-        const items = [];
-        for (const li of el.children) {
-          if ((li.tagName || "").toUpperCase() !== "LI") continue;
-          const cb = li.querySelector("input[type=checkbox]");
-          items.push({ checked: !!(cb && cb.checked), children: parseInline(li, []) });
-        }
-        return { id: uid("b"), type: "taskList", items };
-      }
       const items = [];
-      for (const li of el.children) if ((li.tagName || "").toUpperCase() === "LI") items.push(parseInline(li, []));
-      return { id: uid("b"), type: tag === "UL" ? "bulletList" : "orderedList", items };
+      for (const child of el.childNodes) {
+        const ctag = child.nodeType === Node.ELEMENT_NODE ? (child.tagName || "").toUpperCase() : "";
+        if (ctag === "LI") {
+          const parsed = parseListItem(child);
+          if (isTask) {
+            const cb = child.querySelector("input[type=checkbox]");
+            items.push({ checked: !!(cb && cb.checked), children: parsed.children, blocks: parsed.blocks });
+          } else {
+            items.push({ children: parsed.children, blocks: parsed.blocks });
+          }
+        } else if ((ctag === "UL" || ctag === "OL") && items.length) {
+          // contenteditable 的 indent 有时会把子列表生成在父 <ul> 的
+          // 兄弟位置，而不是塞进上一个 <li> 里；这里统一挂到上一个条目。
+          const nested = blockFromElement(child);
+          if (nested) items[items.length - 1].blocks.push(nested);
+        }
+      }
+      return { id: uid("b"), type: isTask ? "taskList" : tag === "UL" ? "bulletList" : "orderedList", items };
     }
     if (tag === "BLOCKQUOTE") return { id: uid("b"), type: "blockquote", children: parseInline(el, []) };
     if (tag === "PRE") return { id: uid("b"), type: "codeBlock", text: el.textContent || "" };
@@ -401,14 +435,54 @@
     } catch { }
   }
 
-  function wrapInlineCode() {
+  function closestCode(node) {
+    let el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const editor = $("editor");
+    while (el && el !== editor) {
+      if (el.nodeType === Node.ELEMENT_NODE && (el.tagName || "").toUpperCase() === "CODE") return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function toggleInlineCode() {
     try {
+      const editor = $("editor");
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
-      const text = sel.toString();
-      if (!text) return;
-      document.execCommand("insertHTML", false, "<code>" + escapeHtml(text) + "</code>");
+      if (!sel || !sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      if (!editor.contains(range.commonAncestorContainer)) return;
+      if (range.collapsed) return;
+
+      const startCode = closestCode(range.startContainer);
+      const endCode = closestCode(range.endContainer);
+      // 选中内容已经在同一个 <code> 里：再次点击是取消，不是套第二层。
+      if (startCode && startCode === endCode) {
+        const parent = startCode.parentNode;
+        while (startCode.firstChild) parent.insertBefore(startCode.firstChild, startCode);
+        parent.removeChild(startCode);
+        parent.normalize();
+        markDirty();
+        setTimeout(updateBlockHandle, 0);
+        return;
+      }
+      // 跨段落/跨代码边界时不做复杂拼接，避免生成坏结构。
+      if (!topLevelBlock(range.commonAncestorContainer)) return;
+
+      const fragment = range.extractContents();
+      for (const oldCode of Array.from(fragment.querySelectorAll("code"))) {
+        while (oldCode.firstChild) oldCode.parentNode.insertBefore(oldCode.firstChild, oldCode);
+        oldCode.parentNode.removeChild(oldCode);
+      }
+      const code = document.createElement("code");
+      code.appendChild(fragment);
+      range.insertNode(code);
+      const after = document.createRange();
+      after.selectNodeContents(code);
+      sel.removeAllRanges();
+      sel.addRange(after);
       markDirty();
+      setTimeout(updateBlockHandle, 0);
     } catch { }
   }
 
@@ -419,6 +493,22 @@
       document.execCommand("createLink", false, url);
       markDirty();
     } catch { }
+  }
+
+  function normalizeListDom() {
+    const editor = $("editor");
+    if (!editor) return;
+    // contenteditable 的 indent 常把子列表放在父列表的兄弟位置；
+    // 归一到“子列表放进上一个 li”的标准结构，方便再次编辑。
+    for (const list of Array.from(editor.querySelectorAll("ul,ol"))) {
+      for (const child of Array.from(list.children)) {
+        const tag = (child.tagName || "").toUpperCase();
+        if ((tag === "UL" || tag === "OL") && child.previousElementSibling &&
+            (child.previousElementSibling.tagName || "").toUpperCase() === "LI") {
+          child.previousElementSibling.appendChild(child);
+        }
+      }
+    }
   }
 
   function applyColor(kind, value) {
@@ -639,11 +729,25 @@
     });
     $("editor").addEventListener("input", markDirty);
     $("editor").addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveNow().catch(showError); }
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveNow().catch(showError); return; }
+      if (e.key === "Tab") {
+        const sel = window.getSelection();
+        const block = sel && sel.rangeCount ? topLevelBlock(sel.anchorNode) : null;
+        const tag = block ? (block.tagName || "").toUpperCase() : "";
+        if (tag === "UL" || tag === "OL") {
+          e.preventDefault();
+          document.execCommand(e.shiftKey ? "outdent" : "indent", false, null);
+          setTimeout(normalizeListDom, 0);
+          markDirty();
+          setTimeout(updateBlockHandle, 0);
+        }
+      }
     });
     document.querySelectorAll(".toolbar button[data-cmd]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.execCommand(btn.dataset.cmd, false, null);
+        const cmd = btn.dataset.cmd;
+        document.execCommand(cmd, false, null);
+        if (cmd === "indent" || cmd === "outdent") setTimeout(normalizeListDom, 0);
         markDirty();
         $("editor").focus();
       });
@@ -651,7 +755,7 @@
     document.querySelectorAll(".toolbar button[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const action = btn.dataset.action;
-        if (action === "inlineCode") wrapInlineCode();
+        if (action === "inlineCode") toggleInlineCode();
         else if (action === "link") insertLink();
         else if (action === "taskList") insertTaskList();
         $("editor").focus();

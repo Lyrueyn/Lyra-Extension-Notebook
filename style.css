@@ -93,3 +93,6 @@ button.primary { background: linear-gradient(90deg, #2b8fb8, #66ccff); border-co
 .editor ul.task-list input[type=checkbox] { margin-top: 5px; accent-color: var(--accent); }
 .color-tool { display: inline-flex; align-items: center; gap: 3px; color: var(--sub); font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; cursor: pointer; }
 .color-tool input[type=color] { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+
+.editor ul ul, .editor ol ol, .editor ul ol, .editor ol ul { margin: 4px 0 4px 8px; padding-left: 22px; }
+.editor ul.task-list ul.task-list { padding-left: 8px; }
