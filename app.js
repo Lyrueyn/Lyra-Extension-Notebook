@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   "use strict";
 
   const FORMAT = "lyra-notebook";
@@ -384,6 +384,12 @@
       hideBlockOverlays();
       return;
     }
+    // 空段落/空标题不显示段落把手：否则分割线后面的空行会在分割线旁边
+    // 出现一个看起来属于分割线的按钮。
+    if (!(block.textContent || "").trim() && !block.querySelector("img,video,table")) {
+      hideBlockOverlays();
+      return;
+    }
     activeBlock = block;
     savedRange = sel.getRangeAt(0).cloneRange();
     const wrap = document.querySelector(".editor-wrap");
@@ -761,6 +767,8 @@
         const cmd = btn.dataset.cmd;
         document.execCommand(cmd, false, null);
         if (cmd === "indent" || cmd === "outdent") setTimeout(normalizeListDom, 0);
+        hideBlockOverlays();
+        setTimeout(updateBlockHandle, 0);
         markDirty();
         $("editor").focus();
       });

@@ -1,7 +1,7 @@
 ﻿{
   "id": "notebook",
   "name": "笔记本",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "entry": "index.html",
   "description": "本地优先的富文本笔记本：一个 .lyrnb 文件包含多篇笔记。",
   "kind": "notebook",
