@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"/>
@@ -44,6 +44,8 @@
         <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
         <button data-action="inlineCode" title="行内代码">&lt;/&gt;</button>
         <button data-action="link" title="插入链接">链接</button>
+        <button data-action="image" title="插入图片">图片</button>
+        <button data-action="table" title="插入表格">表格</button>
         <span class="sep"></span>
         <button data-cmd="insertUnorderedList" title="无序列表">• 列表</button>
         <button data-cmd="insertOrderedList" title="有序列表">1. 列表</button>
@@ -80,6 +82,7 @@
   </div>
 </div>
 
+<input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden/>
 <script src="vendor/jszip.min.js"></script>
 <script src="app.js"></script>
 </body>

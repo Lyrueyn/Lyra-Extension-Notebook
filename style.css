@@ -108,3 +108,16 @@ button.primary { background: linear-gradient(90deg, #2b8fb8, #66ccff); border-co
 }
 .divider-block:hover .divider-remove { opacity: 1; }
 .divider-remove:hover { color: #ff9aaa; border-color: #6b2b38; }
+
+.image-block { position: relative; margin: 16px 0; text-align: center; }
+.image-block img { max-width: 100%; max-height: 70vh; border-radius: 8px; border: 1px solid var(--line); background: #0b1117; }
+.image-missing { padding: 30px; border: 1px dashed var(--line); border-radius: 8px; color: var(--sub); }
+.image-remove {
+  position: absolute; right: 6px; top: 6px; width: 24px; height: 24px; padding: 0;
+  border: 1px solid var(--line); border-radius: 6px; background: rgba(20,26,34,.85); color: #ff9aaa;
+  opacity: 0; transition: opacity .12s ease;
+}
+.image-block:hover .image-remove { opacity: 1; }
+.note-table { width: 100%; border-collapse: collapse; margin: 14px 0; table-layout: fixed; }
+.note-table td, .note-table th { border: 1px solid var(--line); padding: 7px 9px; min-width: 60px; vertical-align: top; }
+.note-table td:focus, .note-table th:focus { outline: 1px solid var(--accent); outline-offset: -1px; }

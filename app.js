@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   "use strict";
 
   const FORMAT = "lyra-notebook";
@@ -10,6 +10,7 @@
   const state = {
     manifest: null,
     contents: new Map(),
+    assets: new Map(),
     currentId: null,
     dirty: false,
     saveTimer: 0,
@@ -73,6 +74,94 @@
       const d = new Date(iso);
       return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     } catch { return ""; }
+  }
+
+  // ---------- 资源（图片） ----------
+  async function sha256Hex(bytes) {
+    try {
+      if (crypto && crypto.subtle) {
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      }
+    } catch { }
+    // 极少数非安全上下文没有 WebCrypto；用稳定的双 32 位摘要兜底。
+    let h1 = 2166136261, h2 = 0x9e3779b9;
+    for (let i = 0; i < bytes.length; i++) {
+      h1 ^= bytes[i]; h1 = Math.imul(h1, 16777619) >>> 0;
+      h2 = (Math.imul(h2 ^ bytes[i], 0x85ebca6b) + i) >>> 0;
+    }
+    return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0")).repeat(4);
+  }
+
+  function assetExt(mime, name) {
+    const map = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/bmp": ".bmp" };
+    if (map[mime]) return map[mime];
+    const m = String(name || "").match(/\.[a-z0-9]+$/i);
+    return m ? m[0].toLowerCase() : ".bin";
+  }
+
+  async function addAsset(bytes, name, mime) {
+    const sha = await sha256Hex(bytes);
+    const id = "asset-" + sha.slice(0, 24);
+    if (state.assets.has(id)) return state.assets.get(id);
+    const ext = assetExt(mime, name);
+    const asset = {
+      id,
+      path: "assets/" + sha + ext,
+      name: name || ("图片" + ext),
+      mime: mime || "application/octet-stream",
+      size: bytes.length,
+      sha256: sha,
+      base64: bytesToBase64(bytes),
+    };
+    state.assets.set(id, asset);
+    return asset;
+  }
+
+  function assetDataUrl(asset) {
+    return asset ? "data:" + (asset.mime || "application/octet-stream") + ";base64," + asset.base64 : "";
+  }
+
+  function imageElement(block) {
+    const asset = state.assets.get(block.assetId);
+    const wrap = document.createElement("figure");
+    wrap.className = "image-block";
+    wrap.contentEditable = "false";
+    wrap.dataset.assetId = block.assetId || "";
+    if (asset) {
+      const img = document.createElement("img");
+      img.src = assetDataUrl(asset);
+      img.alt = asset.name || "";
+      wrap.appendChild(img);
+    } else {
+      const miss = document.createElement("div");
+      miss.className = "image-missing";
+      miss.textContent = "图片资源缺失";
+      wrap.appendChild(miss);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "image-remove";
+    btn.title = "删除图片";
+    btn.textContent = "×";
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function tableElement(block) {
+    const table = document.createElement("table");
+    table.className = "note-table";
+    const rows = Array.isArray(block.rows) ? block.rows : [];
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      for (const cell of (Array.isArray(row) ? row : [])) {
+        const td = document.createElement("td");
+        td.appendChild(inlineToFragment(cell && cell.children ? cell.children : []));
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    return table;
   }
 
   // ---------- 默认结构 ----------
@@ -213,6 +302,10 @@
       return el;
     } else if (type === "divider") {
       return makeDividerElement();
+    } else if (type === "image") {
+      return imageElement(block);
+    } else if (type === "table") {
+      return tableElement(block);
     } else {
       el = document.createElement("p");
     }
@@ -319,6 +412,21 @@
       return { id: uid("b"), type: isTask ? "taskList" : tag === "UL" ? "bulletList" : "orderedList", items };
     }
     if (el.classList && el.classList.contains("divider-block")) return { id: uid("b"), type: "divider" };
+    if (el.classList && el.classList.contains("image-block")) {
+      return { id: uid("b"), type: "image", assetId: el.dataset.assetId || "" };
+    }
+    if (tag === "TABLE") {
+      const rows = [];
+      for (const tr of el.querySelectorAll("tr")) {
+        const row = [];
+        for (const cell of tr.children) {
+          const ctag = (cell.tagName || "").toUpperCase();
+          if (ctag === "TD" || ctag === "TH") row.push({ children: parseInline(cell, []) });
+        }
+        if (row.length) rows.push(row);
+      }
+      return { id: uid("b"), type: "table", rows };
+    }
     if (tag === "BLOCKQUOTE") return { id: uid("b"), type: "blockquote", children: parseInline(el, []) };
     if (tag === "PRE") return { id: uid("b"), type: "codeBlock", text: el.textContent || "" };
     if (tag === "HR") return { id: uid("b"), type: "divider" };
@@ -400,7 +508,7 @@
       return;
     }
     const tag = (block.tagName || "").toUpperCase();
-    if (block.classList && block.classList.contains("divider-block")) {
+    if (block.classList && (block.classList.contains("divider-block") || block.classList.contains("image-block"))) {
       hideBlockOverlays();
       return;
     }
@@ -560,6 +668,73 @@
     } catch { }
   }
 
+  function insertElementAfterCurrent(el) {
+    const editor = $("editor");
+    const sel = window.getSelection();
+    const block = sel && sel.rangeCount ? topLevelBlock(sel.anchorNode) : null;
+    if (block && block.parentElement === editor) editor.insertBefore(el, block.nextSibling);
+    else editor.appendChild(el);
+    return editor;
+  }
+
+  function placeCaretInNextParagraph(el) {
+    const editor = $("editor");
+    let next = el.nextElementSibling;
+    if (!next || (next.tagName || "").toUpperCase() !== "P") {
+      const p = document.createElement("p");
+      p.innerHTML = "<br>";
+      editor.insertBefore(p, el.nextSibling);
+      next = p;
+    }
+    const range = document.createRange();
+    range.setStart(next, 0);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    editor.focus();
+  }
+
+  function insertImageBlock(asset) {
+    try {
+      const figure = imageElement({ assetId: asset.id });
+      insertElementAfterCurrent(figure);
+      placeCaretInNextParagraph(figure);
+      markDirty();
+      hideBlockOverlays();
+    } catch { }
+  }
+
+  async function handleImageFile(file) {
+    if (!file || !/^image\//.test(file.type || "")) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const asset = await addAsset(bytes, file.name || "图片", file.type || "image/png");
+    insertImageBlock(asset);
+  }
+
+  function insertTableBlock() {
+    try {
+      const spec = prompt("表格尺寸（行x列）", "3x3");
+      if (!spec) return;
+      const m = String(spec).match(/(\d+)\s*[x×,，]\s*(\d+)/i);
+      if (!m) return;
+      const rows = Math.max(1, Math.min(20, parseInt(m[1], 10)));
+      const cols = Math.max(1, Math.min(12, parseInt(m[2], 10)));
+      const cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ children: [] })));
+      const table = tableElement({ rows: cells });
+      insertElementAfterCurrent(table);
+      placeCaretInNextParagraph(table);
+      // 把光标放进第一个单元格，方便直接输入。
+      const first = table.querySelector("td");
+      if (first) {
+        const r = document.createRange(); r.setStart(first, 0); r.collapse(true);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      }
+      markDirty();
+      hideBlockOverlays();
+    } catch { }
+  }
+
   function normalizeListDom() {
     const editor = $("editor");
     if (!editor) return;
@@ -628,11 +803,18 @@
     try {
       syncCurrentNote();
       setSaveState("保存中…", "saving");
+      const assets = Array.from(state.assets.values());
+      state.manifest.assets = assets.map((a) => ({
+        id: a.id, path: a.path, name: a.name, mime: a.mime, size: a.size, sha256: a.sha256,
+      }));
       const zip = new JSZip();
       zip.file("mimetype", MIME, { compression: "STORE" });
       zip.file("manifest.json", JSON.stringify(state.manifest, null, 2));
       for (const [id, note] of state.contents.entries()) {
         zip.file("notes/" + id + ".json", JSON.stringify(note, null, 2));
+      }
+      for (const asset of assets) {
+        zip.file(asset.path, base64ToBytes(asset.base64), { binary: true });
       }
       const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
       const res = await hostCall("host.workspace.save", { data: bytesToBase64(bytes) });
@@ -733,6 +915,15 @@
     if (!Array.isArray(manifest.notes) || manifest.notes.length === 0) {
       manifest.notes = [];
     }
+    const assets = new Map();
+    for (const asset of (Array.isArray(manifest.assets) ? manifest.assets : [])) {
+      try {
+        const f = zip.file(asset.path);
+        if (!f) continue;
+        const bytes = await f.async("uint8array");
+        assets.set(asset.id, Object.assign({}, asset, { base64: bytesToBase64(bytes) }));
+      } catch { }
+    }
     const contents = new Map();
     for (const meta of manifest.notes) {
       const f = zip.file("notes/" + meta.id + ".json");
@@ -746,6 +937,7 @@
     }
     state.manifest = manifest;
     state.contents = contents;
+    state.assets = assets;
     state.currentId = manifest.notes[0].id;
   }
 
@@ -757,6 +949,7 @@
       const d = makeDefaultManifest();
       state.manifest = d.manifest;
       state.contents = d.notes;
+      state.assets = new Map();
       state.currentId = d.manifest.notes[0].id;
       await saveNow();
     } else {
@@ -829,6 +1022,8 @@
         else if (action === "link") insertLink();
         else if (action === "taskList") insertTaskList();
         else if (action === "divider") insertDividerBlock();
+        else if (action === "image") $("imageInput").click();
+        else if (action === "table") insertTableBlock();
         $("editor").focus();
       });
     });
@@ -851,6 +1046,12 @@
       if (wrap && !wrap.contains(e.target)) hideBlockOverlays();
     });
     $("editor").addEventListener("click", (e) => {
+      const imgRemove = e.target && e.target.closest ? e.target.closest(".image-remove") : null;
+      if (imgRemove) {
+        const wrap = imgRemove.closest(".image-block");
+        if (wrap) { wrap.remove(); markDirty(); hideBlockOverlays(); }
+        return;
+      }
       const remove = e.target && e.target.closest ? e.target.closest(".divider-remove") : null;
       if (remove) {
         const wrap = remove.closest(".divider-block");
@@ -880,10 +1081,35 @@
     });
     $("textColor").addEventListener("input", (e) => applyColor("text", e.target.value));
     $("highlightColor").addEventListener("input", (e) => applyColor("highlight", e.target.value));
-    $("editor").addEventListener("paste", (e) => {
-      // 粘贴内容最终仍会被序列化成结构树，避免把外部 HTML 原样存进文件。
-      const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+    $("imageInput").addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (file) await handleImageFile(file).catch(showError);
+    });
+    $("editor").addEventListener("paste", async (e) => {
+      const dt = e.clipboardData || window.clipboardData;
+      if (dt && dt.items) {
+        for (const item of dt.items) {
+          if (item.type && item.type.startsWith("image/")) {
+            const file = item.getAsFile();
+            if (file) { e.preventDefault(); await handleImageFile(file).catch(showError); return; }
+          }
+        }
+      }
+      // 粘贴文本最终仍会被序列化成结构树，避免把外部 HTML 原样存进文件。
+      const text = dt.getData("text/plain");
       if (text) { e.preventDefault(); document.execCommand("insertText", false, text); }
+    });
+    $("editor").addEventListener("dragover", (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) e.preventDefault();
+    });
+    $("editor").addEventListener("drop", async (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      const imgs = Array.from(files).filter((f) => /^image\//.test(f.type || ""));
+      if (!imgs.length) return;
+      e.preventDefault();
+      for (const f of imgs) await handleImageFile(f).catch(showError);
     });
     window.addEventListener("beforeunload", () => {
       if (!state.dirty) return;
