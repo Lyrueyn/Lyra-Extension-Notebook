@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"/>
@@ -38,25 +38,33 @@
         <button data-cmd="undo" title="撤销">↶</button>
         <button data-cmd="redo" title="重做">↷</button>
         <span class="sep"></span>
-        <select id="blockSelect" title="段落样式">
-          <option value="p">正文</option>
-          <option value="h1">标题 1</option>
-          <option value="h2">标题 2</option>
-          <option value="h3">标题 3</option>
-          <option value="blockquote">引用</option>
-          <option value="pre">代码块</option>
-        </select>
-        <span class="sep"></span>
         <button data-cmd="bold" title="粗体"><b>B</b></button>
         <button data-cmd="italic" title="斜体"><i>I</i></button>
         <button data-cmd="underline" title="下划线"><u>U</u></button>
         <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
+        <button data-action="inlineCode" title="行内代码">&lt;/&gt;</button>
+        <button data-action="link" title="插入链接">链接</button>
+        <span class="sep"></span>
         <button data-cmd="insertUnorderedList" title="无序列表">• 列表</button>
         <button data-cmd="insertOrderedList" title="有序列表">1. 列表</button>
+        <button data-action="taskList" title="待办列表">☑ 待办</button>
         <button data-cmd="insertHorizontalRule" title="分割线">—</button>
+        <label class="color-tool" title="文字颜色">A<input id="textColor" type="color" value="#66ccff"/></label>
+        <label class="color-tool" title="高亮颜色">▰<input id="highlightColor" type="color" value="#284a5e"/></label>
       </div>
-      <div id="editor" class="editor" contenteditable="true" spellcheck="false">
-        <p data-placeholder="开始写吧…"></p>
+      <div class="editor-wrap">
+        <button id="blockHandle" class="block-handle" type="button" hidden>正文</button>
+        <div id="blockMenu" class="block-menu" hidden>
+          <button data-block="p" type="button">正文</button>
+          <button data-block="h1" type="button">标题 1</button>
+          <button data-block="h2" type="button">标题 2</button>
+          <button data-block="h3" type="button">标题 3</button>
+          <button data-block="blockquote" type="button">引用</button>
+          <button data-block="pre" type="button">代码块</button>
+        </div>
+        <div id="editor" class="editor" contenteditable="true" spellcheck="false">
+          <p data-placeholder="开始写吧…"></p>
+        </div>
       </div>
     </section>
   </main>

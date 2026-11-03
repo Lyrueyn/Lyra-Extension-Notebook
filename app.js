@@ -167,6 +167,19 @@
         el.appendChild(li);
       }
       return el;
+    } else if (type === "taskList") {
+      el = document.createElement("ul");
+      el.className = "task-list";
+      for (const item of block.items || []) {
+        const li = document.createElement("li");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!item.checked;
+        li.appendChild(cb);
+        li.appendChild(inlineToFragment(item.children || []));
+        el.appendChild(li);
+      }
+      return el;
     } else if (type === "blockquote") {
       el = document.createElement("blockquote");
     } else if (type === "codeBlock") {
@@ -238,6 +251,16 @@
       return { id: uid("b"), type: "heading", level: Number(tag.slice(1)), children: parseInline(el, []) };
     }
     if (tag === "UL" || tag === "OL") {
+      const isTask = el.classList.contains("task-list") || !!el.querySelector("input[type=checkbox]");
+      if (isTask) {
+        const items = [];
+        for (const li of el.children) {
+          if ((li.tagName || "").toUpperCase() !== "LI") continue;
+          const cb = li.querySelector("input[type=checkbox]");
+          items.push({ checked: !!(cb && cb.checked), children: parseInline(li, []) });
+        }
+        return { id: uid("b"), type: "taskList", items };
+      }
       const items = [];
       for (const li of el.children) if ((li.tagName || "").toUpperCase() === "LI") items.push(parseInline(li, []));
       return { id: uid("b"), type: tag === "UL" ? "bulletList" : "orderedList", items };
@@ -266,6 +289,144 @@
     }
     if (!blocks.length) blocks.push({ id: uid("b"), type: "paragraph", children: [] });
     return blocks;
+  }
+
+  // ---------- 段落样式：跟随当前段落的左侧按钮 ----------
+  let savedRange = null;
+  let activeBlock = null;
+
+  function topLevelBlock(node) {
+    const editor = $("editor");
+    let el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    if (!el || !editor.contains(el)) return null;
+    while (el && el !== editor) {
+      if (el.parentElement === editor) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function blockLabel(el) {
+    if (!el) return "";
+    const tag = (el.tagName || "").toUpperCase();
+    if (tag === "H1") return "标题 1";
+    if (tag === "H2") return "标题 2";
+    if (tag === "H3") return "标题 3";
+    if (tag === "H4" || tag === "H5" || tag === "H6") return "标题";
+    if (tag === "BLOCKQUOTE") return "引用";
+    if (tag === "PRE") return "代码块";
+    if (tag === "UL" || tag === "OL") return "列表";
+    return "正文";
+  }
+
+  function hideBlockOverlays() {
+    $("blockHandle").hidden = true;
+    $("blockMenu").hidden = true;
+  }
+
+  function updateBlockHandle() {
+    const editor = $("editor");
+    const handle = $("blockHandle");
+    const menu = $("blockMenu");
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !editor || !editor.contains(sel.anchorNode)) {
+      hideBlockOverlays();
+      return;
+    }
+    const block = topLevelBlock(sel.anchorNode);
+    if (!block) {
+      // 浏览器在空白 contenteditable 里可能把光标放到编辑器根节点，
+      // 先把它规整成一个段落，再显示段落样式按钮。
+      if (sel.anchorNode === editor && sel.rangeCount) {
+        try { document.execCommand("formatBlock", false, "p"); } catch { }
+        setTimeout(updateBlockHandle, 0);
+        return;
+      }
+      hideBlockOverlays();
+      return;
+    }
+    const tag = (block.tagName || "").toUpperCase();
+    if (tag === "UL" || tag === "OL" || tag === "HR" || tag === "IMG" || tag === "TABLE") {
+      hideBlockOverlays();
+      return;
+    }
+    activeBlock = block;
+    savedRange = sel.getRangeAt(0).cloneRange();
+    const wrap = document.querySelector(".editor-wrap");
+    const wr = wrap.getBoundingClientRect();
+    const br = block.getBoundingClientRect();
+    handle.textContent = blockLabel(block);
+    handle.style.left = Math.max(4, Math.round(br.left - wr.left - 54)) + "px";
+    handle.style.top = Math.max(0, Math.round(br.top - wr.top)) + "px";
+    handle.hidden = false;
+    menu.hidden = true;
+  }
+
+  function restoreSelection() {
+    const editor = $("editor");
+    editor.focus();
+    if (!savedRange) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  }
+
+  function applyBlockType(tag) {
+    try {
+      restoreSelection();
+      document.execCommand("formatBlock", false, tag);
+      markDirty();
+      setTimeout(updateBlockHandle, 30);
+    } catch { }
+  }
+
+  function showBlockMenu() {
+    const handle = $("blockHandle");
+    const menu = $("blockMenu");
+    if (handle.hidden) return;
+    const wrap = document.querySelector(".editor-wrap");
+    const wr = wrap.getBoundingClientRect();
+    const hr = handle.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.round(hr.left - wr.left)) + "px";
+    menu.style.top = Math.round(hr.bottom - wr.top + 4) + "px";
+    menu.hidden = false;
+  }
+
+  function insertTaskList() {
+    try {
+      document.execCommand("insertHTML", false,
+        '<ul class="task-list"><li><input type="checkbox"> 待办事项</li></ul>');
+      markDirty();
+      $("editor").focus();
+    } catch { }
+  }
+
+  function wrapInlineCode() {
+    try {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+      const text = sel.toString();
+      if (!text) return;
+      document.execCommand("insertHTML", false, "<code>" + escapeHtml(text) + "</code>");
+      markDirty();
+    } catch { }
+  }
+
+  function insertLink() {
+    try {
+      const url = prompt("输入链接地址（https://…）", "https://");
+      if (!url || url === "https://") return;
+      document.execCommand("createLink", false, url);
+      markDirty();
+    } catch { }
+  }
+
+  function applyColor(kind, value) {
+    try {
+      document.execCommand("styleWithCSS", false, true);
+      document.execCommand(kind === "highlight" ? "hiliteColor" : "foreColor", false, value);
+      markDirty();
+    } catch { }
   }
 
   // ---------- 笔记/元数据 ----------
@@ -482,18 +643,44 @@
     });
     document.querySelectorAll(".toolbar button[data-cmd]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const cmd = btn.dataset.cmd;
-        if (cmd === "undo" || cmd === "redo") document.execCommand(cmd, false, null);
-        else document.execCommand(cmd, false, null);
+        document.execCommand(btn.dataset.cmd, false, null);
         markDirty();
         $("editor").focus();
       });
     });
-    $("blockSelect").addEventListener("change", () => {
-      document.execCommand("formatBlock", false, $("blockSelect").value);
-      markDirty();
-      $("editor").focus();
+    document.querySelectorAll(".toolbar button[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.action;
+        if (action === "inlineCode") wrapInlineCode();
+        else if (action === "link") insertLink();
+        else if (action === "taskList") insertTaskList();
+        $("editor").focus();
+      });
     });
+    $("blockHandle").addEventListener("mousedown", (e) => e.preventDefault());
+    $("blockHandle").addEventListener("click", (e) => {
+      e.preventDefault();
+      showBlockMenu();
+    });
+    $("blockMenu").addEventListener("mousedown", (e) => e.preventDefault());
+    document.querySelectorAll("#blockMenu button[data-block]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        applyBlockType(btn.dataset.block);
+        $("blockMenu").hidden = true;
+      });
+    });
+    document.addEventListener("selectionchange", () => updateBlockHandle());
+    document.addEventListener("mousedown", (e) => {
+      const wrap = document.querySelector(".editor-wrap");
+      if (wrap && !wrap.contains(e.target)) hideBlockOverlays();
+    });
+    $("editor").addEventListener("scroll", updateBlockHandle);
+    $("editor").addEventListener("change", (e) => {
+      if (e.target && e.target.type === "checkbox") markDirty();
+    });
+    $("textColor").addEventListener("input", (e) => applyColor("text", e.target.value));
+    $("highlightColor").addEventListener("input", (e) => applyColor("highlight", e.target.value));
     $("editor").addEventListener("paste", (e) => {
       // 粘贴内容最终仍会被序列化成结构树，避免把外部 HTML 原样存进文件。
       const text = (e.clipboardData || window.clipboardData).getData("text/plain");
