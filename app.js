@@ -43,6 +43,8 @@
         resolve(data);
       }
     });
+    // 笔记本不是阅读器，不使用 lyra-book-ready；主动解除宿主加载层。
+    host.postMessage({ type: "host.ready" });
   }
 
   // ---------- 工具 ----------
