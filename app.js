@@ -389,11 +389,21 @@
     const wrap = document.querySelector(".editor-wrap");
     const wr = wrap.getBoundingClientRect();
     const br = block.getBoundingClientRect();
-    handle.textContent = blockLabel(block);
-    handle.style.left = Math.max(4, Math.round(br.left - wr.left - 54)) + "px";
-    handle.style.top = Math.max(0, Math.round(br.top - wr.top)) + "px";
+    const label = blockLabel(block);
+    handle.textContent = "⋮";
+    handle.title = "段落样式：" + label;
+    handle.style.left = Math.max(2, Math.round(br.left - wr.left - 26)) + "px";
+    handle.style.top = Math.max(0, Math.round(br.top - wr.top + 1)) + "px";
     handle.hidden = false;
     menu.hidden = true;
+    document.querySelectorAll("#blockMenu button[data-block]").forEach((btn) => {
+      const tag = (block.tagName || "").toLowerCase();
+      const active = (tag === "h" + (btn.dataset.block || "").slice(1) && btn.dataset.block.startsWith("h")) ||
+        (tag === "p" && btn.dataset.block === "p") ||
+        (tag === "blockquote" && btn.dataset.block === "blockquote") ||
+        (tag === "pre" && btn.dataset.block === "pre");
+      btn.classList.toggle("active", !!active);
+    });
   }
 
   function restoreSelection() {
@@ -727,7 +737,10 @@
       state.manifest.updatedAt = nowIso();
       markDirty();
     });
-    $("editor").addEventListener("input", markDirty);
+    $("editor").addEventListener("input", () => {
+      markDirty();
+      requestAnimationFrame(updateBlockHandle);
+    });
     $("editor").addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveNow().catch(showError); return; }
       if (e.key === "Tab") {
@@ -780,6 +793,7 @@
       if (wrap && !wrap.contains(e.target)) hideBlockOverlays();
     });
     $("editor").addEventListener("scroll", updateBlockHandle);
+    window.addEventListener("resize", updateBlockHandle);
     $("editor").addEventListener("change", (e) => {
       if (e.target && e.target.type === "checkbox") markDirty();
     });
