@@ -98,3 +98,13 @@ button.primary { background: linear-gradient(90deg, #2b8fb8, #66ccff); border-co
 
 .editor ul ul, .editor ol ol, .editor ul ol, .editor ol ul { margin: 4px 0 4px 8px; padding-left: 22px; }
 .editor ul.task-list ul.task-list { padding-left: 8px; }
+
+.divider-block { position: relative; margin: 12px 0; padding: 7px 0; user-select: none; }
+.divider-block hr { margin: 0; border: 0; border-top: 1px solid var(--line); }
+.divider-remove {
+  position: absolute; right: 4px; top: -2px; width: 22px; height: 22px; padding: 0;
+  border: 1px solid var(--line); border-radius: 5px; background: #1b222c; color: var(--sub);
+  opacity: 0; transition: opacity .12s ease;
+}
+.divider-block:hover .divider-remove { opacity: 1; }
+.divider-remove:hover { color: #ff9aaa; border-color: #6b2b38; }

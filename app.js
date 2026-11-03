@@ -153,6 +153,21 @@
     }).join("");
   }
 
+  function makeDividerElement() {
+    const wrap = document.createElement("div");
+    wrap.className = "divider-block";
+    wrap.contentEditable = "false";
+    const hr = document.createElement("hr");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "divider-remove";
+    btn.title = "删除分割线";
+    btn.textContent = "×";
+    wrap.appendChild(hr);
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
   function blockToElement(block) {
     const type = block.type || "paragraph";
     let el;
@@ -197,7 +212,7 @@
       el.textContent = block.text || inlineText(block.children);
       return el;
     } else if (type === "divider") {
-      return document.createElement("hr");
+      return makeDividerElement();
     } else {
       el = document.createElement("p");
     }
@@ -211,6 +226,10 @@
     const blocks = Array.isArray(note.blocks) ? note.blocks : [];
     const list = blocks.length ? blocks : [{ id: uid("b"), type: "paragraph", children: [] }];
     for (const block of list) editor.appendChild(blockToElement(block));
+    const last = editor.lastElementChild;
+    if (last && last.classList && last.classList.contains("divider-block")) {
+      const p = document.createElement("p"); p.innerHTML = "<br>"; editor.appendChild(p);
+    }
     if (!editor.querySelector("p, h1, h2, h3, ul, ol, blockquote, pre, hr")) {
       editor.innerHTML = "<p><br></p>";
     }
@@ -299,6 +318,7 @@
       }
       return { id: uid("b"), type: isTask ? "taskList" : tag === "UL" ? "bulletList" : "orderedList", items };
     }
+    if (el.classList && el.classList.contains("divider-block")) return { id: uid("b"), type: "divider" };
     if (tag === "BLOCKQUOTE") return { id: uid("b"), type: "blockquote", children: parseInline(el, []) };
     if (tag === "PRE") return { id: uid("b"), type: "codeBlock", text: el.textContent || "" };
     if (tag === "HR") return { id: uid("b"), type: "divider" };
@@ -380,6 +400,10 @@
       return;
     }
     const tag = (block.tagName || "").toUpperCase();
+    if (block.classList && block.classList.contains("divider-block")) {
+      hideBlockOverlays();
+      return;
+    }
     if (tag === "UL" || tag === "OL" || tag === "HR" || tag === "IMG" || tag === "TABLE") {
       hideBlockOverlays();
       return;
@@ -508,6 +532,31 @@
       if (!url || url === "https://") return;
       document.execCommand("createLink", false, url);
       markDirty();
+    } catch { }
+  }
+
+  function insertDividerBlock() {
+    try {
+      const editor = $("editor");
+      const sel = window.getSelection();
+      let block = sel && sel.rangeCount ? topLevelBlock(sel.anchorNode) : null;
+      const wrap = makeDividerElement();
+      if (block && block.parentElement === editor) {
+        editor.insertBefore(wrap, block.nextSibling);
+      } else {
+        editor.appendChild(wrap);
+      }
+      const p = document.createElement("p");
+      p.innerHTML = "<br>";
+      editor.insertBefore(p, wrap.nextSibling);
+      const range = document.createRange();
+      range.setStart(p, 0);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      editor.focus();
+      markDirty();
+      hideBlockOverlays();
     } catch { }
   }
 
@@ -779,6 +828,7 @@
         if (action === "inlineCode") toggleInlineCode();
         else if (action === "link") insertLink();
         else if (action === "taskList") insertTaskList();
+        else if (action === "divider") insertDividerBlock();
         $("editor").focus();
       });
     });
@@ -799,6 +849,29 @@
     document.addEventListener("mousedown", (e) => {
       const wrap = document.querySelector(".editor-wrap");
       if (wrap && !wrap.contains(e.target)) hideBlockOverlays();
+    });
+    $("editor").addEventListener("click", (e) => {
+      const remove = e.target && e.target.closest ? e.target.closest(".divider-remove") : null;
+      if (remove) {
+        const wrap = remove.closest(".divider-block");
+        if (wrap) { wrap.remove(); markDirty(); hideBlockOverlays(); }
+        return;
+      }
+      const divider = e.target && e.target.closest ? e.target.closest(".divider-block") : null;
+      if (divider) {
+        e.preventDefault();
+        const next = divider.nextElementSibling;
+        const p = next && (next.tagName || "").toUpperCase() === "P" ? next : document.createElement("p");
+        if (!p.parentElement) { p.innerHTML = "<br>"; divider.parentElement.insertBefore(p, divider.nextSibling); }
+        const range = document.createRange();
+        range.setStart(p, 0);
+        range.collapse(true);
+        const sel2 = window.getSelection();
+        sel2.removeAllRanges();
+        sel2.addRange(range);
+        $("editor").focus();
+        hideBlockOverlays();
+      }
     });
     $("editor").addEventListener("scroll", updateBlockHandle);
     window.addEventListener("resize", updateBlockHandle);
