@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>笔记本 · 璃鸢镜</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="dot"></span>
+      <input id="notebookTitle" class="notebook-title" value="未命名笔记本" spellcheck="false"/>
+    </div>
+    <div class="top-actions">
+      <span id="saveState" class="save-state">已保存</span>
+      <button id="newNoteBtn" class="primary" type="button">＋ 新建笔记</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <h2>笔记</h2>
+        <span id="noteCount" class="muted">0</span>
+      </div>
+      <input id="searchNotes" class="search" type="search" placeholder="搜索笔记标题…" autocomplete="off"/>
+      <div id="noteList" class="note-list"></div>
+    </aside>
+
+    <section class="editor-pane">
+      <div class="editor-head">
+        <input id="noteTitle" class="note-title" placeholder="笔记标题" spellcheck="false"/>
+        <button id="deleteNoteBtn" class="ghost danger-text" type="button">删除笔记</button>
+      </div>
+      <div class="toolbar">
+        <button data-cmd="undo" title="撤销">↶</button>
+        <button data-cmd="redo" title="重做">↷</button>
+        <span class="sep"></span>
+        <select id="blockSelect" title="段落样式">
+          <option value="p">正文</option>
+          <option value="h1">标题 1</option>
+          <option value="h2">标题 2</option>
+          <option value="h3">标题 3</option>
+          <option value="blockquote">引用</option>
+          <option value="pre">代码块</option>
+        </select>
+        <span class="sep"></span>
+        <button data-cmd="bold" title="粗体"><b>B</b></button>
+        <button data-cmd="italic" title="斜体"><i>I</i></button>
+        <button data-cmd="underline" title="下划线"><u>U</u></button>
+        <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
+        <button data-cmd="insertUnorderedList" title="无序列表">• 列表</button>
+        <button data-cmd="insertOrderedList" title="有序列表">1. 列表</button>
+        <button data-cmd="insertHorizontalRule" title="分割线">—</button>
+      </div>
+      <div id="editor" class="editor" contenteditable="true" spellcheck="false">
+        <p data-placeholder="开始写吧…"></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="errorMask" class="mask" hidden>
+  <div class="dialog">
+    <h2>笔记本无法打开</h2>
+    <p id="errorText"></p>
+    <p class="muted">如果文件已损坏，可以尝试同目录下的 .bak 备份。</p>
+  </div>
+</div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

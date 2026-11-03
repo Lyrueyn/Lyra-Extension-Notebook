@@ -1,0 +1,508 @@
+(() => {
+  "use strict";
+
+  const FORMAT = "lyra-notebook";
+  const FORMAT_VERSION = 1;
+  const MIME = "application/vnd.lyra.notebook+zip";
+  const $ = (id) => document.getElementById(id);
+  const host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
+
+  const state = {
+    manifest: null,
+    contents: new Map(),
+    currentId: null,
+    dirty: false,
+    saveTimer: 0,
+    hostSeq: 0,
+    pending: new Map(),
+    saveInFlight: false,
+  };
+
+  // ---------- 宿主桥接 ----------
+  function hostCall(type, extra = {}) {
+    return new Promise((resolve) => {
+      if (!host) { resolve({ ok: false, error: "当前不是扩展宿主环境" }); return; }
+      const requestId = "nb-" + (++state.hostSeq) + "-" + Date.now();
+      state.pending.set(requestId, resolve);
+      host.postMessage(Object.assign({ type, requestId }, extra));
+      setTimeout(() => {
+        if (state.pending.has(requestId)) {
+          state.pending.delete(requestId);
+          resolve({ ok: false, error: "宿主响应超时" });
+        }
+      }, 20000);
+    });
+  }
+
+  if (host) {
+    host.addEventListener("message", (event) => {
+      const data = event.data || {};
+      const resolve = state.pending.get(data.requestId);
+      if (resolve) {
+        state.pending.delete(data.requestId);
+        resolve(data);
+      }
+    });
+  }
+
+  // ---------- 工具 ----------
+  function uid(prefix) {
+    const s = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    return prefix + "-" + s;
+  }
+  function nowIso() { return new Date().toISOString(); }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function bytesToBase64(bytes) {
+    let bin = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    return btoa(bin);
+  }
+  function base64ToBytes(b64) {
+    const bin = atob(b64 || "");
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  function fmtDate(iso) {
+    try {
+      const d = new Date(iso);
+      return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    } catch { return ""; }
+  }
+
+  // ---------- 默认结构 ----------
+  function makeDefaultNote(title) {
+    return {
+      format: "lyra-note",
+      formatVersion: 1,
+      id: uid("note"),
+      title: title || "未命名笔记",
+      blocks: [{ id: uid("b"), type: "paragraph", children: [] }],
+    };
+  }
+
+  function makeDefaultManifest() {
+    const note = makeDefaultNote("第一篇笔记");
+    const now = nowIso();
+    return {
+      manifest: {
+        format: FORMAT,
+        formatVersion: FORMAT_VERSION,
+        id: uid("book"),
+        title: "未命名笔记本",
+        createdAt: now,
+        updatedAt: now,
+        appVersion: "1.3.3",
+        notes: [{
+          id: note.id, title: note.title, parentId: null, order: 0,
+          createdAt: now, updatedAt: now, tags: [], pinned: false,
+        }],
+        assets: [],
+        settings: { theme: "dark", fontScale: 1.0, pageWidth: "normal" },
+      },
+      notes: new Map([[note.id, note]]),
+    };
+  }
+
+  // ---------- 文档结构树 -> DOM ----------
+  function markElement(mark, el) {
+    const t = mark && mark.type;
+    if (!t) return el;
+    if (t === "bold") { const e = document.createElement("strong"); e.appendChild(el); return e; }
+    if (t === "italic") { const e = document.createElement("em"); e.appendChild(el); return e; }
+    if (t === "underline") { const e = document.createElement("u"); e.appendChild(el); return e; }
+    if (t === "strike") { const e = document.createElement("s"); e.appendChild(el); return e; }
+    if (t === "inlineCode") { const e = document.createElement("code"); e.appendChild(el); return e; }
+    if (t === "link") {
+      const a = document.createElement("a");
+      a.href = mark.href || "#";
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.appendChild(el);
+      return a;
+    }
+    if (t === "color") { const e = document.createElement("span"); e.style.color = mark.value || "inherit"; e.appendChild(el); return e; }
+    if (t === "highlight") { const e = document.createElement("span"); e.style.backgroundColor = mark.value || "rgba(102,204,255,.25)"; e.appendChild(el); return e; }
+    return el;
+  }
+
+  function inlineToFragment(inline) {
+    const frag = document.createDocumentFragment();
+    const list = Array.isArray(inline) ? inline : [];
+    for (const token of list) {
+      if (!token || token.type === "empty") continue;
+      if (token.type === "hardBreak") { frag.appendChild(document.createElement("br")); continue; }
+      let el = document.createTextNode(token.text || "");
+      const marks = Array.isArray(token.marks) ? token.marks : [];
+      for (let i = marks.length - 1; i >= 0; i--) el = markElement(marks[i], el);
+      frag.appendChild(el);
+    }
+    return frag;
+  }
+
+  function inlineText(inline) {
+    return (Array.isArray(inline) ? inline : []).map((t) => {
+      if (!t) return "";
+      if (t.type === "hardBreak") return "\n";
+      return t.text || "";
+    }).join("");
+  }
+
+  function blockToElement(block) {
+    const type = block.type || "paragraph";
+    let el;
+    if (type === "heading") {
+      const level = Math.min(6, Math.max(1, Number(block.level) || 1));
+      el = document.createElement("h" + level);
+    } else if (type === "bulletList" || type === "orderedList") {
+      el = document.createElement(type === "bulletList" ? "ul" : "ol");
+      for (const item of block.items || []) {
+        const li = document.createElement("li");
+        li.appendChild(inlineToFragment(item));
+        el.appendChild(li);
+      }
+      return el;
+    } else if (type === "blockquote") {
+      el = document.createElement("blockquote");
+    } else if (type === "codeBlock") {
+      el = document.createElement("pre");
+      el.textContent = block.text || inlineText(block.children);
+      return el;
+    } else if (type === "divider") {
+      return document.createElement("hr");
+    } else {
+      el = document.createElement("p");
+    }
+    el.appendChild(inlineToFragment(block.children || []));
+    return el;
+  }
+
+  function renderNote(note) {
+    const editor = $("editor");
+    editor.innerHTML = "";
+    const blocks = Array.isArray(note.blocks) ? note.blocks : [];
+    const list = blocks.length ? blocks : [{ id: uid("b"), type: "paragraph", children: [] }];
+    for (const block of list) editor.appendChild(blockToElement(block));
+    if (!editor.querySelector("p, h1, h2, h3, ul, ol, blockquote, pre, hr")) {
+      editor.innerHTML = "<p><br></p>";
+    }
+  }
+
+  // ---------- DOM -> 文档结构树 ----------
+  function parseInline(node, inherited) {
+    const out = [];
+    if (!node) return out;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue || "";
+      if (text) out.push({ type: "text", text, marks: inherited.slice() });
+      return out;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return out;
+    const tag = (node.tagName || "").toUpperCase();
+    if (tag === "BR") { out.push({ type: "hardBreak" }); return out; }
+    if (tag === "SCRIPT" || tag === "STYLE") return out;
+    const marks = inherited.slice();
+    if (tag === "STRONG" || tag === "B") marks.push({ type: "bold" });
+    else if (tag === "EM" || tag === "I") marks.push({ type: "italic" });
+    else if (tag === "U") marks.push({ type: "underline" });
+    else if (tag === "S" || tag === "STRIKE" || tag === "DEL") marks.push({ type: "strike" });
+    else if (tag === "CODE") marks.push({ type: "inlineCode" });
+    else if (tag === "A") marks.push({ type: "link", href: node.getAttribute("href") || "" });
+    else if (tag === "SPAN") {
+      const color = node.style && node.style.color;
+      const bg = node.style && node.style.backgroundColor;
+      if (color) marks.push({ type: "color", value: color });
+      if (bg) marks.push({ type: "highlight", value: bg });
+    }
+    for (const child of node.childNodes) {
+      for (const token of parseInline(child, marks)) out.push(token);
+    }
+    return out;
+  }
+
+  function blockFromElement(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) {
+      if (el && el.nodeType === Node.TEXT_NODE && el.nodeValue.trim()) {
+        return { id: uid("b"), type: "paragraph", children: parseInline(el, []) };
+      }
+      return null;
+    }
+    if (el.id === "editor") return null;
+    const tag = (el.tagName || "").toUpperCase();
+    if (tag === "H1" || tag === "H2" || tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6") {
+      return { id: uid("b"), type: "heading", level: Number(tag.slice(1)), children: parseInline(el, []) };
+    }
+    if (tag === "UL" || tag === "OL") {
+      const items = [];
+      for (const li of el.children) if ((li.tagName || "").toUpperCase() === "LI") items.push(parseInline(li, []));
+      return { id: uid("b"), type: tag === "UL" ? "bulletList" : "orderedList", items };
+    }
+    if (tag === "BLOCKQUOTE") return { id: uid("b"), type: "blockquote", children: parseInline(el, []) };
+    if (tag === "PRE") return { id: uid("b"), type: "codeBlock", text: el.textContent || "" };
+    if (tag === "HR") return { id: uid("b"), type: "divider" };
+    if (tag === "DIV" && el.querySelector("p,h1,h2,h3,ul,ol,blockquote,pre,hr")) {
+      const out = [];
+      for (const child of el.childNodes) {
+        const b = blockFromElement(child);
+        if (b) out.push(b);
+      }
+      return out;
+    }
+    return { id: uid("b"), type: "paragraph", children: parseInline(el, []) };
+  }
+
+  function blocksFromEditor() {
+    const editor = $("editor");
+    const blocks = [];
+    for (const child of editor.childNodes) {
+      const b = blockFromElement(child);
+      if (Array.isArray(b)) blocks.push(...b);
+      else if (b) blocks.push(b);
+    }
+    if (!blocks.length) blocks.push({ id: uid("b"), type: "paragraph", children: [] });
+    return blocks;
+  }
+
+  // ---------- 笔记/元数据 ----------
+  function currentMeta() {
+    return state.manifest && state.manifest.notes.find((n) => n.id === state.currentId) || null;
+  }
+
+  function setSaveState(text, cls) {
+    const el = $("saveState");
+    el.textContent = text;
+    el.className = "save-state" + (cls ? " " + cls : "");
+  }
+
+  function markDirty() {
+    state.dirty = true;
+    setSaveState("未保存", "saving");
+    clearTimeout(state.saveTimer);
+    state.saveTimer = setTimeout(() => { saveNow().catch(showError); }, 1000);
+  }
+
+  function noteTitleFromEditor() {
+    const t = $("noteTitle").value.trim();
+    return t || "未命名笔记";
+  }
+
+  function syncCurrentNote() {
+    const meta = currentMeta();
+    if (!meta) return;
+    meta.title = noteTitleFromEditor();
+    meta.updatedAt = nowIso();
+    let content = state.contents.get(meta.id);
+    if (!content) { content = makeDefaultNote(meta.title); content.id = meta.id; state.contents.set(meta.id, content); }
+    content.title = meta.title;
+    content.blocks = blocksFromEditor();
+    state.manifest.updatedAt = nowIso();
+  }
+
+  // ---------- 保存 ----------
+  async function saveNow() {
+    if (state.saveInFlight) return;
+    if (!state.manifest) return;
+    state.saveInFlight = true;
+    clearTimeout(state.saveTimer);
+    try {
+      syncCurrentNote();
+      setSaveState("保存中…", "saving");
+      const zip = new JSZip();
+      zip.file("mimetype", MIME, { compression: "STORE" });
+      zip.file("manifest.json", JSON.stringify(state.manifest, null, 2));
+      for (const [id, note] of state.contents.entries()) {
+        zip.file("notes/" + id + ".json", JSON.stringify(note, null, 2));
+      }
+      const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+      const res = await hostCall("host.workspace.save", { data: bytesToBase64(bytes) });
+      if (!res || !res.ok) throw new Error((res && res.error) || "保存失败");
+      state.dirty = false;
+      setSaveState("已保存 " + new Date().toLocaleTimeString().slice(0, 5), "");
+      renderNoteList();
+    } catch (e) {
+      setSaveState("保存失败", "error");
+      throw e;
+    } finally {
+      state.saveInFlight = false;
+    }
+  }
+
+  // ---------- 界面 ----------
+  function renderNoteList() {
+    const list = $("noteList");
+    const q = ($("searchNotes").value || "").trim().toLowerCase();
+    const notes = (state.manifest ? state.manifest.notes.slice() : [])
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .filter((n) => !q || (n.title || "").toLowerCase().includes(q));
+    $("noteCount").textContent = String(state.manifest ? state.manifest.notes.length : 0);
+    list.innerHTML = "";
+    for (const n of notes) {
+      const item = document.createElement("div");
+      item.className = "note-item" + (n.id === state.currentId ? " active" : "");
+      item.innerHTML = `<div class="n-title">${escapeHtml(n.title || "未命名笔记")}</div><div class="n-date">${escapeHtml(fmtDate(n.updatedAt))}</div>`;
+      item.addEventListener("click", () => selectNote(n.id).catch(showError));
+      list.appendChild(item);
+    }
+  }
+
+  function fillEditorFromCurrent() {
+    const meta = currentMeta();
+    if (!meta) return;
+    const content = state.contents.get(meta.id) || makeDefaultNote(meta.title);
+    state.contents.set(meta.id, content);
+    $("noteTitle").value = meta.title || content.title || "未命名笔记";
+    renderNote(content);
+  }
+
+  async function selectNote(id) {
+    if (id === state.currentId) return;
+    if (state.dirty) await saveNow();
+    state.currentId = id;
+    const meta = currentMeta();
+    if (!meta) return;
+    $("noteTitle").value = meta.title || "未命名笔记";
+    fillEditorFromCurrent();
+    renderNoteList();
+  }
+
+  async function createNote() {
+    try {
+      if (state.dirty) await saveNow();
+      const note = makeDefaultNote("未命名笔记");
+      const now = nowIso();
+      const meta = {
+        id: note.id, title: note.title, parentId: null,
+        order: state.manifest.notes.length,
+        createdAt: now, updatedAt: now, tags: [], pinned: false,
+      };
+      state.manifest.notes.push(meta);
+      state.contents.set(note.id, note);
+      state.currentId = note.id;
+      $("noteTitle").value = note.title;
+      fillEditorFromCurrent();
+      renderNoteList();
+      markDirty();
+      $("noteTitle").focus();
+      $("noteTitle").select();
+    } catch (e) { showError(e); }
+  }
+
+  async function deleteNote() {
+    const meta = currentMeta();
+    if (!meta) return;
+    if (state.manifest.notes.length <= 1) { alert("至少保留一篇笔记"); return; }
+    if (!confirm("删除笔记“" + (meta.title || "未命名笔记") + "”？")) return;
+    state.manifest.notes = state.manifest.notes.filter((n) => n.id !== meta.id);
+    state.contents.delete(meta.id);
+    const next = state.manifest.notes.slice().sort((a, b) => (a.order || 0) - (b.order || 0))[0];
+    state.currentId = next ? next.id : null;
+    if (next) fillEditorFromCurrent();
+    renderNoteList();
+    markDirty();
+  }
+
+  // ---------- 打开/初始化 ----------
+  async function loadPackage(bytes) {
+    const zip = await JSZip.loadAsync(bytes);
+    const mf = zip.file("manifest.json");
+    if (!mf) throw new Error("缺少 manifest.json");
+    const manifest = JSON.parse(await mf.async("string"));
+    if (manifest.format !== FORMAT) throw new Error("不是 .lyrnb 笔记本文件");
+    if (Number(manifest.formatVersion) > FORMAT_VERSION) throw new Error("这个笔记本由更高版本创建，请升级主程序");
+    if (!Array.isArray(manifest.notes) || manifest.notes.length === 0) {
+      manifest.notes = [];
+    }
+    const contents = new Map();
+    for (const meta of manifest.notes) {
+      const f = zip.file("notes/" + meta.id + ".json");
+      if (!f) {
+        const n = makeDefaultNote(meta.title);
+        n.id = meta.id;
+        contents.set(meta.id, n);
+      } else {
+        contents.set(meta.id, JSON.parse(await f.async("string")));
+      }
+    }
+    state.manifest = manifest;
+    state.contents = contents;
+    state.currentId = manifest.notes[0].id;
+  }
+
+  async function init() {
+    if (!host) { showError(new Error("请从璃鸢镜扩展中打开笔记本")); return; }
+    const res = await hostCall("host.workspace.load");
+    if (!res || !res.ok) throw new Error((res && res.error) || "读取笔记本失败");
+    if (!res.data) {
+      const d = makeDefaultManifest();
+      state.manifest = d.manifest;
+      state.contents = d.notes;
+      state.currentId = d.manifest.notes[0].id;
+      await saveNow();
+    } else {
+      await loadPackage(base64ToBytes(res.data));
+    }
+    if (!state.manifest.notes.length) {
+      const t = makeDefaultNote("第一篇笔记");
+      state.manifest.notes.push({ id: t.id, title: t.title, parentId: null, order: 0, createdAt: nowIso(), updatedAt: nowIso(), tags: [], pinned: false });
+      state.contents.set(t.id, t);
+      state.currentId = t.id;
+    }
+    if (!state.currentId) state.currentId = state.manifest.notes[0].id;
+    $("notebookTitle").value = state.manifest.title || "未命名笔记本";
+    fillEditorFromCurrent();
+    renderNoteList();
+    setSaveState("已保存");
+  }
+
+  function showError(e) {
+    $("errorText").textContent = String(e && e.message ? e.message : e);
+    $("errorMask").hidden = false;
+  }
+
+  // ---------- 事件 ----------
+  function bind() {
+    $("newNoteBtn").addEventListener("click", createNote);
+    $("deleteNoteBtn").addEventListener("click", deleteNote);
+    $("searchNotes").addEventListener("input", renderNoteList);
+    $("noteTitle").addEventListener("input", markDirty);
+    $("notebookTitle").addEventListener("input", () => {
+      if (!state.manifest) return;
+      state.manifest.title = $("notebookTitle").value.trim() || "未命名笔记本";
+      state.manifest.updatedAt = nowIso();
+      markDirty();
+    });
+    $("editor").addEventListener("input", markDirty);
+    $("editor").addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveNow().catch(showError); }
+    });
+    document.querySelectorAll(".toolbar button[data-cmd]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const cmd = btn.dataset.cmd;
+        if (cmd === "undo" || cmd === "redo") document.execCommand(cmd, false, null);
+        else document.execCommand(cmd, false, null);
+        markDirty();
+        $("editor").focus();
+      });
+    });
+    $("blockSelect").addEventListener("change", () => {
+      document.execCommand("formatBlock", false, $("blockSelect").value);
+      markDirty();
+      $("editor").focus();
+    });
+    $("editor").addEventListener("paste", (e) => {
+      // 粘贴内容最终仍会被序列化成结构树，避免把外部 HTML 原样存进文件。
+      const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+      if (text) { e.preventDefault(); document.execCommand("insertText", false, text); }
+    });
+    window.addEventListener("beforeunload", () => {
+      if (!state.dirty) return;
+      try { saveNow(); } catch { }
+    });
+  }
+
+  bind();
+  init().catch(showError);
+})();

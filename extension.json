@@ -1,0 +1,27 @@
+{
+  "id": "notebook",
+  "name": "笔记本",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "description": "本地优先的富文本笔记本：一个 .lyrnb 文件包含多篇笔记。",
+  "kind": "notebook",
+  "fileTypes": [".lyrnb"],
+  "host": {
+    "innerName": "notebook.lyrnb",
+    "fileParam": "notebook",
+    "keepMtime": false
+  },
+  "library": {
+    "sidebar": true,
+    "navLabel": "笔记",
+    "glyph": "\uE70F",
+    "title": "笔记本",
+    "description": "打开已有笔记本，或新建一个 .lyrnb 文件。一个笔记本里可以有多篇笔记。",
+    "openLabel": "打开笔记本",
+    "addLabel": "＋ 新建笔记本",
+    "authorFallback": "本地笔记本",
+    "cover": "none",
+    "order": 40,
+    "metadata": ""
+  }
+}
