@@ -25,7 +25,7 @@
 - 移除固定 Quick properties 面板，避免和搜索结果重复；所有属性统一走搜索 + inline style 列表
 - 右侧可调 flex/grid 布局、子元素对齐、间距、字体、颜色、圆角、变换、过渡、滤镜等，修改直接写回源码 inline style
 - 图片：Image 按钮选择本地图片，按 SHA-256 存入 `.lyrnb` 的 `assets/`，源码插入 `<img src="assets/...">`
-- Format 按钮 / Shift+Alt+F 格式化 HTML：src/alt 等属性保持同一行，style 属性里的声明逐条换行
+- Format 按钮 / Shift+Alt+F 格式化 HTML：长标签属性逐行缩进 2 格，style 属性里的声明缩进 4 格逐条换行
 - 源码编辑器启用软换行，长行不再需要横向滚动
 - Attributes 面板可改元素 id / class
 - 一个笔记就是一段 HTML/CSS，不再受自定义块语法限制

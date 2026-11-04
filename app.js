@@ -677,6 +677,40 @@
       } catch { return match; }
     });
   }
+  function fixOpeningTagIndent(html) {
+    const lines = html.split("\n");
+    let state = null;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!state) {
+        const trimmed = line.trim();
+        if (/<[a-zA-Z][\w:-]*$/.test(trimmed) && !trimmed.includes(">")) {
+          const base = (line.match(/^[ \t]*/) || [""])[0];
+          state = { base: base, style: false };
+        }
+        continue;
+      }
+      const t = line.trim();
+      if (t === ">" || t === "/>" || t.startsWith(">")) {
+        lines[i] = state.base + t;
+        state = null;
+        continue;
+      }
+      if (state.style) {
+        lines[i] = state.base + "    " + t;
+        if (t.endsWith(">")) state = null;
+        continue;
+      }
+      const attr = t.match(/^([^\s=]+)\s*=/);
+      if (attr) {
+        lines[i] = state.base + "  " + t;
+        if (attr[1] === "style" && !t.endsWith('"')) state.style = true;
+        continue;
+      }
+      lines[i] = state.base + "  " + t;
+    }
+    return lines.join("\n");
+  }
   function formatSource() {
     if (typeof window.html_beautify !== "function") return;
     const source = getSource();
@@ -686,13 +720,14 @@
       preserve_newlines: true,
       max_preserve_newlines: 2,
       wrap_line_length: 0,
-      wrap_attributes: "auto",
+      wrap_attributes: "force-expand-multiline",
       wrap_attributes_indent_size: 2,
       wrap_attributes_min_attrs: 2,
       end_with_newline: true,
     });
     formatted = formatStyleAttributes(formatted);
     formatted = formatStyleTags(formatted);
+    formatted = fixOpeningTagIndent(formatted);
     setSourceValue(formatted, false);
     const note = currentNote();
     if (note) note.html = formatted;
