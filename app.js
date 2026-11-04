@@ -369,6 +369,7 @@
       if (state.suppressMirror) return;
       const note = currentNote();
       if (note) note.html = cm.getValue();
+      state.sourceMap = annotateHtml(cm.getValue()).map;
       clearSelection();
       markDirty();
       schedulePreview(false);
@@ -388,6 +389,7 @@
     cm.on("cursorActivity", () => {
       const line = cm.getCursor().line + 1;
       $("sourcePos").textContent = "Ln " + line;
+      selectFromSourceCursor();
     });
   }
 
@@ -742,6 +744,7 @@
     var d = e.data;
     if (!d || d.source !== SOURCE) return;
     if (d.type === "inspect") { inspect = !!d.value; if (!inspect) clearHover(); }
+    else if (d.type === "clearHighlight") { clearHover(); }
     else if (d.type === "getTree") { sendTree(); }
     else if (d.type === "selectById") {
       try {
@@ -840,6 +843,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       postToPreview("inspect", { value: state.inspectMode });
       postToPreview("getTree", {});
       if (state.pendingReselect) postToPreview("reselect", { selector: state.pendingReselect });
+      setTimeout(selectFromSourceCursor, 60);
     } else if (data.type === "tree") {
       state.domTree = data.tree || null;
       if (state.activeTab === "dom") renderDomTree();
@@ -1281,9 +1285,41 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       escapeHtml(data.selector || "") +
       (data.text ? '<br><span style="color:#6f8193">' + escapeHtml(data.text) + "</span>" : "");
   }
+  function findSourceElementAtCursor() {
+    const cm = state.mirror;
+    if (!cm || !state.sourceMap) return null;
+    const pos = cm.indexFromPos(cm.getCursor());
+    let best = null, bestSpan = Infinity;
+    const skip = new Set(["style", "script", "head", "meta", "link", "title", "html"]);
+    for (const [id, entry] of Object.entries(state.sourceMap)) {
+      if (!entry || skip.has(entry.tag)) continue;
+      const end = entry.fullEnd == null ? entry.end : entry.fullEnd;
+      if (pos < entry.start || pos >= end) continue;
+      const span = end - entry.start;
+      if (span < bestSpan && span > 0) { best = id; bestSpan = span; }
+    }
+    return best;
+  }
+  function selectFromSourceCursor() {
+    if (!state.mirror || state.suppressMirror) return;
+    const id = findSourceElementAtCursor();
+    if (id) {
+      if (String(id) === String(state.selectedSrcId)) return;
+      state.sourceDrivenSelection = true;
+      postToPreview("selectById", { srcId: id });
+      setTimeout(() => { state.sourceDrivenSelection = false; }, 900);
+    } else if (state.selectedSrcId) {
+      state.sourceDrivenSelection = true;
+      clearSelection();
+      postToPreview("clearHighlight", {});
+      setTimeout(() => { state.sourceDrivenSelection = false; }, 900);
+    }
+  }
   function applySelection(data, isReselect) {
     const entry = state.sourceMap[data.srcId];
     if (!entry) return;
+    const fromSource = state.sourceDrivenSelection;
+    state.sourceDrivenSelection = false;
     state.selectedSrcId = data.srcId;
     state.selectedSelector = data.selector || "";
     state.selectedLine = entry.line;
@@ -1297,7 +1333,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     syncInspector(data.computed || {});
     syncCssFieldsForSelection();
     setInspectorEnabled(true);
-    highlightLine(entry.line, !isReselect);
+    highlightLine(entry.line, !isReselect && !fromSource);
   }
   function toHexColor(value) {
     if (!value) return "#ffffff";

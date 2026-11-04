@@ -18,6 +18,7 @@
 - 引用检查：查找缺失资源和未使用资源
 - 预览支持 Responsive / 1440 / 1024 / 768 / 390 宽度
 - 检查元素：点击预览元素，左侧跳到对应源码行
+- 源码光标同步：左边光标落在哪个元素里，右边 Dev Tool 自动显示哪个元素，不需要先 Inspect
 - 95 个 CSS 属性控件（Layout / Flex+Grid / Size / Spacing / Typography / Background+Border / Effects）+ 任意自定义属性，全部英文属性名
 - 右侧可调 flex/grid 布局、子元素对齐、间距、字体、颜色、圆角、变换、过渡、滤镜等，修改直接写回源码 inline style
 - 图片：Image 按钮选择本地图片，按 SHA-256 存入 `.lyrnb` 的 `assets/`，源码插入 `<img src="assets/...">`
