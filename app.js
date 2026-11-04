@@ -28,6 +28,8 @@
     mirror: null,
     suppressMirror: false,
     highlightedLine: 0,
+    domTree: null,
+    activeTab: "style",
   };
 
   // ---------- 宿主桥接 ----------
@@ -398,6 +400,7 @@
     const asset = await addAsset(bytes, file.name || "image", file.type || "image/png");
     const alt = escapeAttr(file.name || asset.name || "image");
     insertTextAtCursor('\n<img src="' + asset.path + '" alt="' + alt + '">\n');
+    renderAssets();
     $("saveState").textContent = "未保存";
     $("saveState").className = "save-state saving";
   }
@@ -679,10 +682,42 @@
     setHover(el);
     send("select", pick(el));
   }, true);
+  function buildTree(el, depth) {
+    if (!el || depth > 12) return null;
+    var sid = el.getAttribute ? el.getAttribute("data-lyra-src") : "";
+    if (!sid && el !== document.body) return null;
+    var children = [];
+    for (var i = 0; i < el.children.length; i++) {
+      var child = buildTree(el.children[i], depth + 1);
+      if (child) children.push(child);
+    }
+    var ownText = "";
+    for (var j = 0; j < el.childNodes.length; j++) {
+      if (el.childNodes[j].nodeType === 3) ownText += el.childNodes[j].nodeValue;
+    }
+    return {
+      srcId: sid,
+      tag: el.tagName.toLowerCase(),
+      id: el.id || "",
+      className: el.getAttribute("class") || "",
+      text: ownText.replace(/\\s+/g, " ").trim().slice(0, 60),
+      children: children
+    };
+  }
+  function sendTree() {
+    send("tree", { tree: buildTree(document.body, 0) });
+  }
   window.addEventListener("message", function(e){
     var d = e.data;
     if (!d || d.source !== SOURCE) return;
     if (d.type === "inspect") { inspect = !!d.value; if (!inspect) clearHover(); }
+    else if (d.type === "getTree") { sendTree(); }
+    else if (d.type === "selectById") {
+      try {
+        var target = document.querySelector("[data-lyra-src=\\"" + String(d.srcId).replace(/"/g, "") + "\\"]");
+        if (target) { setHover(target); send("select", pick(target)); }
+      } catch(err) {}
+    }
     else if (d.type === "reselect") {
       try {
         var el = d.selector ? document.querySelector(d.selector) : null;
@@ -690,6 +725,7 @@
       } catch(err) {}
     }
   });
+  setTimeout(sendTree, 80);
   send("ready");
 })();
 `.replace(/<\/script>/gi, "<\\/script>");
@@ -770,9 +806,14 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     if (data.source !== PREVIEW_SOURCE) return;
     if (data.type === "ready") {
       postToPreview("inspect", { value: state.inspectMode });
+      postToPreview("getTree", {});
       if (state.pendingReselect) postToPreview("reselect", { selector: state.pendingReselect });
+    } else if (data.type === "tree") {
+      state.domTree = data.tree || null;
+      if (state.activeTab === "dom") renderDomTree();
     } else if (data.type === "select") {
       applySelection(data, !!data.reselect);
+      if (state.activeTab === "dom") markDomSelection();
     }
   });
 
@@ -799,6 +840,125 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("attrClass").value = "";
     setInspectorEnabled(false);
   }
+  // ---------- DOM tree / assets / tabs ----------
+  function switchTab(name) {
+    state.activeTab = name;
+    document.querySelectorAll(".dev-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll(".tab-content").forEach((el) => { el.hidden = el.id !== "tab" + name.charAt(0).toUpperCase() + name.slice(1); });
+    if (name === "dom") {
+      renderDomTree();
+      if (!state.domTree) postToPreview("getTree", {});
+    } else if (name === "assets") {
+      renderAssets();
+    }
+  }
+  function markDomSelection() {
+    document.querySelectorAll(".dom-row").forEach((el) => el.classList.toggle("active", el.dataset.srcId === state.selectedSrcId));
+  }
+  function renderDomTree() {
+    const host = $("domTree");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!state.domTree) {
+      host.textContent = "Loading DOM…";
+      return;
+    }
+    const walk = (node, depth) => {
+      const row = document.createElement("div");
+      row.className = "dom-row";
+      row.dataset.srcId = node.srcId;
+      row.style.paddingLeft = (6 + depth * 12) + "px";
+      const tag = document.createElement("span");
+      tag.className = "dom-tag";
+      tag.textContent = "<" + node.tag + ">";
+      row.appendChild(tag);
+      if (node.id) {
+        const id = document.createElement("span");
+        id.className = "dom-id";
+        id.textContent = "#" + node.id;
+        row.appendChild(id);
+      }
+      if (node.className) {
+        const cls = document.createElement("span");
+        cls.className = "dom-class";
+        cls.textContent = "." + node.className.split(/\s+/).join(".");
+        row.appendChild(cls);
+      }
+      if (!node.children.length && node.text) {
+        const txt = document.createElement("span");
+        txt.className = "dom-text";
+        txt.textContent = node.text;
+        row.appendChild(txt);
+      }
+      row.addEventListener("click", () => {
+        if (node.srcId) postToPreview("selectById", { srcId: node.srcId });
+      });
+      host.appendChild(row);
+      for (const child of node.children || []) walk(child, depth + 1);
+    };
+    walk(state.domTree, 0);
+    markDomSelection();
+  }
+  function renderAssets() {
+    const host = $("assetList");
+    if (!host) return;
+    host.innerHTML = "";
+    const assets = Array.from(state.assets.values());
+    if (!assets.length) {
+      const empty = document.createElement("div");
+      empty.className = "tab-hint";
+      empty.textContent = "No assets in this notebook yet. Use the Image button to add one.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const asset of assets) {
+      const card = document.createElement("div");
+      card.className = "asset-card";
+      const img = document.createElement("img");
+      img.src = assetDataUrl(asset);
+      img.alt = asset.name || "";
+      card.appendChild(img);
+      const meta = document.createElement("div");
+      meta.className = "asset-meta";
+      meta.innerHTML = '<b>' + escapeHtml(asset.name || "image") + "</b><br>" +
+        '<span class="asset-path">' + escapeHtml(asset.path) + "</span><br>" +
+        Math.max(1, Math.round((asset.size || 0) / 1024)) + " KB";
+      card.appendChild(meta);
+      const actions = document.createElement("div");
+      actions.className = "asset-actions";
+      const insert = document.createElement("button");
+      insert.type = "button"; insert.className = "ghost"; insert.textContent = "Insert";
+      insert.addEventListener("click", () => {
+        insertTextAtCursor('\n<img src="' + asset.path + '" alt="' + escapeAttr(asset.name || "image") + '">\n');
+      });
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.className = "ghost"; copy.textContent = "Copy path";
+      copy.addEventListener("click", () => {
+        const path = asset.path;
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(path).catch(() => {});
+        else {
+          const ta = document.createElement("textarea");
+          ta.value = path; document.body.appendChild(ta); ta.select();
+          try { document.execCommand("copy"); } catch { }
+          ta.remove();
+        }
+      });
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "ghost danger-text"; del.textContent = "Delete";
+      del.addEventListener("click", () => {
+        if (!confirm("Remove asset " + (asset.name || asset.path) + " from this notebook?")) return;
+        state.assets.delete(asset.id);
+        markDirty();
+        schedulePreview(false);
+        scheduleSave();
+        renderAssets();
+      });
+      actions.appendChild(insert); actions.appendChild(copy); actions.appendChild(del);
+      card.appendChild(actions);
+      host.appendChild(card);
+    }
+  }
+
   function infoHtml(data) {
     return '<b>' + escapeHtml(data.tag || "") + "</b> · " +
       escapeHtml(data.selector || "") +
@@ -1153,6 +1313,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     setInspectorEnabled(false);
     $("saveState").textContent = "已保存";
     $("saveState").className = "save-state";
+    renderAssets();
     if (!res.data) await saveNow();
   }
 
@@ -1173,6 +1334,9 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       if (file) await handleImageFile(file).catch(showError);
     });
     $("applyAttrsBtn").addEventListener("click", applyAttributes);
+    document.querySelectorAll(".dev-tab").forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
     $("notebookTitle").addEventListener("input", () => {
       if (!state.manifest) return;
       state.manifest.title = $("notebookTitle").value.trim() || "未命名笔记本";
