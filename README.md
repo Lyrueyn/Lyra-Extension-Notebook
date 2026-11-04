@@ -29,6 +29,7 @@
 - 图片：Image 按钮选择本地图片，按 SHA-256 存入 `.lyrnb` 的 `assets/`，源码插入 `<img src="assets/...">`
 - Format 按钮 / Shift+Alt+F 格式化 HTML：长标签属性逐行缩进 2 格，style 属性里的声明缩进 4 格逐条换行
 - 源码编辑器启用软换行，长行不再需要横向滚动
+- 预览默认给 img 加 min-width:0，flex 容器内的图片按比例收缩，不会撑破父级边框
 - Attributes 面板可改元素 id / class
 - 一个笔记就是一段 HTML/CSS，不再受自定义块语法限制
 - 一个 `.lyrnb` 仍包含多篇 HTML 笔记，支持旧版块格式自动迁移

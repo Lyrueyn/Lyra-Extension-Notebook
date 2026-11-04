@@ -1100,7 +1100,7 @@ body {
   margin: 0; padding: 24px; background: #ffffff; color: #1f2937;
   font: 16px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
-img { max-width: 100%; height: auto; }
+img { max-width: 100%; min-width: 0; height: auto; }
 table { border-collapse: collapse; }
 td, th { border: 1px solid #d8dee8; padding: 6px 8px; }
 a { color: #1d8fc0; }
