@@ -1,6 +1,6 @@
-﻿# `.lyrnb` 笔记本格式 v1
+# `.lyrnb` HTML 笔记本格式 v2
 
-`.lyrnb` 是一个 ZIP 容器，内含一个笔记本的多篇笔记和资源。它不是 Markdown，也不是 HTML 文档；正文保存为结构化文档树。
+`.lyrnb` 是一个 ZIP 容器。v2 起每篇笔记的正文就是一个独立 HTML 文件，不再是结构化 JSON 块。
 
 ## 容器结构
 
@@ -9,9 +9,9 @@ notebook.lyrnb
 ├─ mimetype                固定值 application/vnd.lyra.notebook+zip
 ├─ manifest.json           笔记本元信息、笔记索引、资源清单
 ├─ notes/
-│  └─ <note-id>.json       每篇笔记一个文件
-├─ assets/                 图片等资源（后续版本）
-└─ thumbnail.png           可选封面（后续版本）
+│  └─ <note-id>.html       每篇笔记一个 HTML 文件
+└─ assets/
+   └─ <sha256>.<ext>       图片等资源
 ```
 
 ## manifest.json
@@ -19,16 +19,17 @@ notebook.lyrnb
 ```json
 {
   "format": "lyra-notebook",
-  "formatVersion": 1,
+  "formatVersion": 2,
   "id": "UUID",
   "title": "笔记本标题",
   "createdAt": "ISO-8601",
   "updatedAt": "ISO-8601",
-  "appVersion": "1.3.3",
+  "appVersion": "1.0.0",
   "notes": [
     {
       "id": "note-id",
       "title": "笔记标题",
+      "type": "html",
       "parentId": null,
       "order": 0,
       "createdAt": "ISO-8601",
@@ -37,53 +38,52 @@ notebook.lyrnb
       "pinned": false
     }
   ],
-  "assets": [],
-  "settings": { "theme": "dark", "fontScale": 1.0, "pageWidth": "normal" }
-}
-```
-
-## note JSON
-
-```json
-{
-  "format": "lyra-note",
-  "formatVersion": 1,
-  "id": "note-id",
-  "title": "笔记标题",
-  "blocks": [
+  "assets": [
     {
-      "id": "block-id",
-      "type": "paragraph",
-      "children": [
-        { "type": "text", "text": "普通文字" },
-        { "type": "text", "text": "粗体", "marks": [{ "type": "bold" }] }
-      ]
+      "id": "asset-...",
+      "path": "assets/<sha256>.png",
+      "name": "截图.png",
+      "mime": "image/png",
+      "size": 12345,
+      "sha256": "...."
     }
-  ]
+  ],
+  "settings": { "theme": "dark" }
 }
 ```
 
-## 节点类型（v1）
+## 笔记 HTML
 
-- `paragraph`
-- `heading`（`level` 1–6）
-- `bulletList` / `orderedList`（`items`: `{children: 行内数组, blocks: 子列表块数组}`；旧版行内数组仍兼容）
-- `taskList`（`items`: `{checked, children}`）\n- `blockquote`
-- `codeBlock`
-- `image`（`assetId` 指向 manifest.assets）
-- `table`（`rows`: 二维单元格数组，每格 `{children}`）
-- `divider`
+`notes/<id>.html` 是完整可编辑的 HTML 片段或完整文档：
 
-后续版本增加表格、图片、待办、折叠块等；未知节点必须原样保留，旧版本不能打开再保存时丢数据。
+```html
+<h1>标题</h1>
+<p>正文可以自由使用 HTML：<strong>粗体</strong>、<a href="#">链接</a>、表格、图片等。</p>
+<section style="display:flex; gap:16px;">
+  <div style="flex:1; padding:16px;">左栏</div>
+  <div style="flex:1; padding:16px;">右栏</div>
+</section>
+```
 
-## 行内标记
+编辑器的检查器只会把临时 `data-lyra-src` 属性注入到预览 DOM，不会写回源文件。选中元素后右侧的样式操作会改写源码中该标签的 `style` 属性。
 
-`bold`、`italic`、`underline`、`strike`、`inlineCode`、`link`、`color`、`highlight`。
+## 资源路径
 
-## 原则
+HTML 里可以写：
 
-1. HTML 不是存储格式；只在粘贴、导出、打印时使用。
-2. 一个 `.lyrnb` 包含多篇 `notes/*.json`，不是把所有内容塞进一个巨大 HTML。
-3. 保存时写入临时文件，成功后替换原文件；宿主保留 `.bak`。
-4. 资产按 SHA-256 命名，避免重名和路径穿越。
-5. `formatVersion` 只增不减；高版本文件在旧程序中只读，不覆盖。
+```html
+<img src="assets/<sha256>.png">
+```
+
+预览时扩展会把 `assets/...` 替换为 data URL；文件里仍保存原始相对路径，保证 `.lyrnb` 可移动。
+
+## v1 兼容
+
+旧版 `.lyrnb` 的 `notes/<id>.json` 结构化块会在首次打开时转换成 HTML；保存后写成 v2 的 `notes/<id>.html`。旧文件不会丢内容。
+
+## 为什么用 HTML
+
+- 可以直接写任意 HTML/CSS，布局自由
+- 中间 iframe 热预览，右边 Dev Tool 检查元素和调样式
+- 不需要维护一套 Markdown/自定义块语法
+- 以后即使换文件类型，HTML 也可以作为导入/导出层

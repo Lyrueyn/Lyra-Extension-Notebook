@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>笔记本 · 璃鸢镜</title>
+  <title>HTML 笔记 · 璃鸢镜</title>
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -13,64 +13,100 @@
       <span class="dot"></span>
       <input id="notebookTitle" class="notebook-title" value="未命名笔记本" spellcheck="false"/>
     </div>
-    <div class="top-actions">
+    <div class="note-bar">
+      <select id="noteSelect" class="note-select" title="切换笔记"></select>
+      <button id="newNoteBtn" class="primary" type="button">＋ 笔记</button>
+      <button id="deleteNoteBtn" class="ghost danger-text" type="button">删除</button>
+      <input id="noteTitle" class="note-title-input" placeholder="笔记标题" spellcheck="false"/>
+    </div>
+    <div class="top-status">
       <span id="saveState" class="save-state">已保存</span>
-      <button id="newNoteBtn" class="primary" type="button">＋ 新建笔记</button>
     </div>
   </header>
 
   <main class="workspace">
-    <aside class="sidebar">
-      <div class="sidebar-head">
-        <h2>笔记</h2>
-        <span id="noteCount" class="muted">0</span>
+    <section class="pane source-pane">
+      <div class="pane-head">
+        <span>HTML 源码</span>
+        <span id="sourcePos" class="pane-meta">行 1</span>
       </div>
-      <input id="searchNotes" class="search" type="search" placeholder="搜索笔记标题…" autocomplete="off"/>
-      <div id="noteList" class="note-list"></div>
-    </aside>
-
-    <section class="editor-pane">
-      <div class="editor-head">
-        <input id="noteTitle" class="note-title" placeholder="笔记标题" spellcheck="false"/>
-        <button id="deleteNoteBtn" class="ghost danger-text" type="button">删除笔记</button>
-      </div>
-      <div class="toolbar">
-        <button data-cmd="undo" title="撤销">↶</button>
-        <button data-cmd="redo" title="重做">↷</button>
-        <span class="sep"></span>
-        <button data-cmd="bold" title="粗体"><b>B</b></button>
-        <button data-cmd="italic" title="斜体"><i>I</i></button>
-        <button data-cmd="underline" title="下划线"><u>U</u></button>
-        <button data-cmd="strikeThrough" title="删除线"><s>S</s></button>
-        <button data-action="inlineCode" title="行内代码">&lt;/&gt;</button>
-        <button data-action="link" title="插入链接">链接</button>
-        <button data-action="image" title="插入图片">图片</button>
-        <button data-action="table" title="插入表格">表格</button>
-        <span class="sep"></span>
-        <button data-cmd="insertUnorderedList" title="无序列表">• 列表</button>
-        <button data-cmd="insertOrderedList" title="有序列表">1. 列表</button>
-        <button data-action="taskList" title="待办列表">☑ 待办</button>
-        <button data-cmd="indent" title="增加缩进 / 列表降级">→]</button>
-        <button data-cmd="outdent" title="减少缩进 / 列表升级">[←</button>
-        <button data-action="divider" title="分割线">—</button>
-        <label class="color-tool" title="文字颜色">A<input id="textColor" type="color" value="#66ccff"/></label>
-        <label class="color-tool" title="高亮颜色">▰<input id="highlightColor" type="color" value="#284a5e"/></label>
-      </div>
-      <div class="editor-wrap">
-        <button id="blockHandle" class="block-handle" type="button" hidden title="段落样式">⋮</button>
-        <div id="blockMenu" class="block-menu" hidden>
-          <button data-block="p" type="button">正文</button>
-          <button data-block="h1" type="button">标题 1</button>
-          <button data-block="h2" type="button">标题 2</button>
-          <button data-block="h3" type="button">标题 3</button>
-          <button data-block="blockquote" type="button">引用</button>
-          <button data-block="pre" type="button">代码块</button>
-        </div>
-        <div id="editor" class="editor" contenteditable="true" spellcheck="false">
-          <p data-placeholder="开始写吧…"></p>
-        </div>
+      <div class="code-wrap">
+        <div id="lineNumbers" class="line-numbers">1</div>
+        <textarea id="sourceEditor" class="source-editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
       </div>
     </section>
+
+    <section class="pane preview-pane">
+      <div class="pane-head">
+        <span>实时预览</span>
+        <div class="preview-actions">
+          <button id="reloadBtn" class="ghost" type="button">刷新</button>
+          <button id="inspectBtn" class="ghost" type="button" title="开启后点击预览元素，左侧源码和右侧样式会同步">检查元素</button>
+        </div>
+      </div>
+      <div class="preview-wrap">
+        <iframe id="previewFrame" class="preview-frame" sandbox="allow-same-origin allow-scripts"></iframe>
+      </div>
+    </section>
+
+    <aside class="pane inspector-pane">
+      <div class="pane-head">
+        <span>Dev Tool / 调参</span>
+        <span id="inspectorLine" class="pane-meta">未选择元素</span>
+      </div>
+      <div class="inspector-scroll">
+        <div id="selInfo" class="selection-info">点击预览中的元素进行检查；开启「检查元素」后才会拦截点击。</div>
+
+        <section class="inspector-group">
+          <h3>子元素对齐</h3>
+          <div class="flex-presets">
+            <button data-flex="row-start" type="button">横排 · 左</button>
+            <button data-flex="row-center" type="button">横排 · 中</button>
+            <button data-flex="row-between" type="button">横排 · 两端</button>
+            <button data-flex="column-start" type="button">竖排 · 上</button>
+            <button data-flex="column-center" type="button">竖排 · 中</button>
+            <button data-flex="column-between" type="button">竖排 · 两端</button>
+          </div>
+          <div class="control-grid">
+            <label>display<select data-style="display"><option>block</option><option>flex</option><option>grid</option><option>inline-block</option><option>inline</option><option>none</option></select></label>
+            <label>flex 方向<select data-style="flexDirection"><option>row</option><option>column</option><option>row-reverse</option><option>column-reverse</option></select></label>
+            <label>主轴对齐<select data-style="justifyContent"><option>flex-start</option><option>center</option><option>flex-end</option><option>space-between</option><option>space-around</option><option>space-evenly</option></select></label>
+            <label>交叉轴对齐<select data-style="alignItems"><option>stretch</option><option>flex-start</option><option>center</option><option>flex-end</option></select></label>
+            <label>gap<input data-style="gap" type="range" min="0" max="80" step="1"/></label>
+            <label>text-align<select data-style="textAlign"><option>left</option><option>center</option><option>right</option><option>justify</option></select></label>
+          </div>
+        </section>
+
+        <section class="inspector-group">
+          <h3>尺寸与间距</h3>
+          <div class="control-grid">
+            <label>width<input data-style="width" type="text" placeholder="auto"/></label>
+            <label>height<input data-style="height" type="text" placeholder="auto"/></label>
+            <label>padding<input data-style="padding" type="range" min="0" max="96" step="1"/></label>
+            <label>margin<input data-style="margin" type="range" min="0" max="96" step="1"/></label>
+            <label>圆角<input data-style="borderRadius" type="range" min="0" max="80" step="1"/></label>
+          </div>
+        </section>
+
+        <section class="inspector-group">
+          <h3>文字与颜色</h3>
+          <div class="control-grid">
+            <label>字号<input data-style="fontSize" type="range" min="8" max="72" step="1"/></label>
+            <label>字重<select data-style="fontWeight"><option>300</option><option>400</option><option>500</option><option>600</option><option>700</option><option>800</option></select></label>
+            <label>文字颜色<input data-style="color" type="color" value="#1f2937"/></label>
+            <label>背景颜色<input data-style="backgroundColor" type="color" value="#ffffff"/></label>
+          </div>
+        </section>
+
+        <section class="inspector-group">
+          <h3>源码位置</h3>
+          <div class="control-grid">
+            <button id="jumpSourceBtn" class="ghost" type="button">跳转到源码行</button>
+            <button id="clearStyleBtn" class="ghost danger-text" type="button">清除内联样式</button>
+          </div>
+        </section>
+      </div>
+    </aside>
   </main>
 </div>
 
@@ -82,7 +118,6 @@
   </div>
 </div>
 
-<input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden/>
 <script src="vendor/jszip.min.js"></script>
 <script src="app.js"></script>
 </body>

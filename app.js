@@ -1,22 +1,30 @@
-(() => {
+﻿(() => {
   "use strict";
 
   const FORMAT = "lyra-notebook";
-  const FORMAT_VERSION = 1;
+  const FORMAT_VERSION = 2;
   const MIME = "application/vnd.lyra.notebook+zip";
+  const PREVIEW_SOURCE = "lyra-html-notebook";
   const $ = (id) => document.getElementById(id);
   const host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
 
   const state = {
     manifest: null,
-    contents: new Map(),
+    notes: new Map(),
     assets: new Map(),
     currentId: null,
+    sourceMap: {},
+    selectedSrcId: null,
+    selectedSelector: "",
+    selectedLine: 0,
+    inspectMode: false,
     dirty: false,
     saveTimer: 0,
+    previewTimer: 0,
+    saveInFlight: false,
     hostSeq: 0,
     pending: new Map(),
-    saveInFlight: false,
+    syncingControls: false,
   };
 
   // ---------- 宿主桥接 ----------
@@ -31,32 +39,28 @@
           state.pending.delete(requestId);
           resolve({ ok: false, error: "宿主响应超时" });
         }
-      }, 20000);
+      }, 30000);
     });
   }
-
   if (host) {
     host.addEventListener("message", (event) => {
       const data = event.data || {};
       const resolve = state.pending.get(data.requestId);
-      if (resolve) {
-        state.pending.delete(data.requestId);
-        resolve(data);
-      }
+      if (resolve) { state.pending.delete(data.requestId); resolve(data); }
     });
-    // 笔记本不是阅读器，不使用 lyra-book-ready；主动解除宿主加载层。
     host.postMessage({ type: "host.ready" });
   }
 
-  // ---------- 工具 ----------
+  // ---------- 基础工具 ----------
   function uid(prefix) {
-    const s = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    const s = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
     return prefix + "-" + s;
   }
   function nowIso() { return new Date().toISOString(); }
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
+  function escapeAttr(s) { return escapeHtml(s).replace(/`/g, "&#96;"); }
   function bytesToBase64(bytes) {
     let bin = "";
     const chunk = 0x8000;
@@ -75,108 +79,29 @@
       return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     } catch { return ""; }
   }
-
-  // ---------- 资源（图片） ----------
-  async function sha256Hex(bytes) {
-    try {
-      if (crypto && crypto.subtle) {
-        const digest = await crypto.subtle.digest("SHA-256", bytes);
-        return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      }
-    } catch { }
-    // 极少数非安全上下文没有 WebCrypto；用稳定的双 32 位摘要兜底。
-    let h1 = 2166136261, h2 = 0x9e3779b9;
-    for (let i = 0; i < bytes.length; i++) {
-      h1 ^= bytes[i]; h1 = Math.imul(h1, 16777619) >>> 0;
-      h2 = (Math.imul(h2 ^ bytes[i], 0x85ebca6b) + i) >>> 0;
-    }
-    return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0")).repeat(4);
-  }
-
-  function assetExt(mime, name) {
-    const map = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/bmp": ".bmp" };
-    if (map[mime]) return map[mime];
-    const m = String(name || "").match(/\.[a-z0-9]+$/i);
-    return m ? m[0].toLowerCase() : ".bin";
-  }
-
-  async function addAsset(bytes, name, mime) {
-    const sha = await sha256Hex(bytes);
-    const id = "asset-" + sha.slice(0, 24);
-    if (state.assets.has(id)) return state.assets.get(id);
-    const ext = assetExt(mime, name);
-    const asset = {
-      id,
-      path: "assets/" + sha + ext,
-      name: name || ("图片" + ext),
-      mime: mime || "application/octet-stream",
-      size: bytes.length,
-      sha256: sha,
-      base64: bytesToBase64(bytes),
-    };
-    state.assets.set(id, asset);
-    return asset;
-  }
-
   function assetDataUrl(asset) {
     return asset ? "data:" + (asset.mime || "application/octet-stream") + ";base64," + asset.base64 : "";
   }
 
-  function imageElement(block) {
-    const asset = state.assets.get(block.assetId);
-    const wrap = document.createElement("figure");
-    wrap.className = "image-block";
-    wrap.contentEditable = "false";
-    wrap.dataset.assetId = block.assetId || "";
-    if (asset) {
-      const img = document.createElement("img");
-      img.src = assetDataUrl(asset);
-      img.alt = asset.name || "";
-      wrap.appendChild(img);
-    } else {
-      const miss = document.createElement("div");
-      miss.className = "image-missing";
-      miss.textContent = "图片资源缺失";
-      wrap.appendChild(miss);
-    }
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "image-remove";
-    btn.title = "删除图片";
-    btn.textContent = "×";
-    wrap.appendChild(btn);
-    return wrap;
+  // ---------- 默认内容 ----------
+  function defaultHtml() {
+    return `<h1>新笔记</h1>
+<p>左边写 HTML，中间实时预览，右边检查元素并调整样式。</p>
+`;
   }
-
-  function tableElement(block) {
-    const table = document.createElement("table");
-    table.className = "note-table";
-    const rows = Array.isArray(block.rows) ? block.rows : [];
-    for (const row of rows) {
-      const tr = document.createElement("tr");
-      for (const cell of (Array.isArray(row) ? row : [])) {
-        const td = document.createElement("td");
-        td.appendChild(inlineToFragment(cell && cell.children ? cell.children : []));
-        tr.appendChild(td);
-      }
-      table.appendChild(tr);
-    }
-    return table;
-  }
-
-  // ---------- 默认结构 ----------
-  function makeDefaultNote(title) {
+  function defaultNote(title) {
+    const id = uid("note");
+    const now = nowIso();
     return {
-      format: "lyra-note",
-      formatVersion: 1,
-      id: uid("note"),
-      title: title || "未命名笔记",
-      blocks: [{ id: uid("b"), type: "paragraph", children: [] }],
+      meta: {
+        id, title: title || "未命名笔记", type: "html", parentId: null, order: 0,
+        createdAt: now, updatedAt: now, tags: [], pinned: false,
+      },
+      html: defaultHtml(),
     };
   }
-
-  function makeDefaultManifest() {
-    const note = makeDefaultNote("第一篇笔记");
+  function defaultManifest() {
+    const n = defaultNote("新笔记");
     const now = nowIso();
     return {
       manifest: {
@@ -186,735 +111,630 @@
         title: "未命名笔记本",
         createdAt: now,
         updatedAt: now,
-        appVersion: "1.3.3",
-        notes: [{
-          id: note.id, title: note.title, parentId: null, order: 0,
-          createdAt: now, updatedAt: now, tags: [], pinned: false,
-        }],
+        appVersion: "1.0.0",
+        notes: [n.meta],
         assets: [],
-        settings: { theme: "dark", fontScale: 1.0, pageWidth: "normal" },
+        settings: { theme: "dark" },
       },
-      notes: new Map([[note.id, note]]),
+      notes: new Map([[n.meta.id, n]]),
     };
   }
 
-  // ---------- 文档结构树 -> DOM ----------
-  function markElement(mark, el) {
-    const t = mark && mark.type;
-    if (!t) return el;
-    if (t === "bold") { const e = document.createElement("strong"); e.appendChild(el); return e; }
-    if (t === "italic") { const e = document.createElement("em"); e.appendChild(el); return e; }
-    if (t === "underline") { const e = document.createElement("u"); e.appendChild(el); return e; }
-    if (t === "strike") { const e = document.createElement("s"); e.appendChild(el); return e; }
-    if (t === "inlineCode") { const e = document.createElement("code"); e.appendChild(el); return e; }
-    if (t === "link") {
-      const a = document.createElement("a");
-      a.href = mark.href || "#";
-      a.target = "_blank";
-      a.rel = "noreferrer";
-      a.appendChild(el);
-      return a;
-    }
-    if (t === "color") { const e = document.createElement("span"); e.style.color = mark.value || "inherit"; e.appendChild(el); return e; }
-    if (t === "highlight") { const e = document.createElement("span"); e.style.backgroundColor = mark.value || "rgba(102,204,255,.25)"; e.appendChild(el); return e; }
-    return el;
-  }
-
-  function inlineToFragment(inline) {
-    const frag = document.createDocumentFragment();
-    const list = Array.isArray(inline) ? inline : [];
-    for (const token of list) {
-      if (!token || token.type === "empty") continue;
-      if (token.type === "hardBreak") { frag.appendChild(document.createElement("br")); continue; }
-      let el = document.createTextNode(token.text || "");
-      const marks = Array.isArray(token.marks) ? token.marks : [];
-      for (let i = marks.length - 1; i >= 0; i--) el = markElement(marks[i], el);
-      frag.appendChild(el);
-    }
-    return frag;
-  }
-
-  function inlineText(inline) {
-    return (Array.isArray(inline) ? inline : []).map((t) => {
+  // ---------- 旧版结构树 -> HTML（迁移 v1 笔记） ----------
+  function legacyInline(list) {
+    if (!Array.isArray(list)) return "";
+    return list.map((t) => {
       if (!t) return "";
-      if (t.type === "hardBreak") return "\n";
-      return t.text || "";
+      if (t.type === "hardBreak") return "<br>";
+      let out = escapeHtml(t.text || "");
+      const marks = Array.isArray(t.marks) ? t.marks : [];
+      for (const mark of marks) {
+        const type = mark && mark.type;
+        if (type === "bold") out = "<strong>" + out + "</strong>";
+        else if (type === "italic") out = "<em>" + out + "</em>";
+        else if (type === "underline") out = "<u>" + out + "</u>";
+        else if (type === "strike") out = "<s>" + out + "</s>";
+        else if (type === "inlineCode") out = "<code>" + out + "</code>";
+        else if (type === "link") out = '<a href="' + escapeAttr(mark.href || "#") + '">' + out + "</a>";
+        else if (type === "color") out = '<span style="color:' + escapeAttr(mark.value || "inherit") + '">' + out + "</span>";
+        else if (type === "highlight") out = '<span style="background-color:' + escapeAttr(mark.value || "#fff3b0") + '">' + out + "</span>";
+      }
+      return out;
     }).join("");
   }
-
-  function makeDividerElement() {
-    const wrap = document.createElement("div");
-    wrap.className = "divider-block";
-    wrap.contentEditable = "false";
-    const hr = document.createElement("hr");
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "divider-remove";
-    btn.title = "删除分割线";
-    btn.textContent = "×";
-    wrap.appendChild(hr);
-    wrap.appendChild(btn);
-    return wrap;
+  function legacyList(block, ordered) {
+    const tag = ordered ? "ol" : "ul";
+    const items = (block.items || []).map((raw) => {
+      const item = Array.isArray(raw) ? { children: raw, blocks: [] } : (raw || {});
+      let inner = "";
+      if (item.checked !== undefined) inner += '<input type="checkbox" ' + (item.checked ? "checked " : "") + 'disabled> ';
+      inner += legacyInline(item.children || []);
+      for (const nested of item.blocks || []) inner += legacyBlock(nested);
+      return "<li>" + inner + "</li>";
+    }).join("");
+    return "<" + tag + ">" + items + "</" + tag + ">";
   }
-
-  function blockToElement(block) {
+  function legacyBlock(block) {
+    if (!block) return "";
     const type = block.type || "paragraph";
-    let el;
     if (type === "heading") {
       const level = Math.min(6, Math.max(1, Number(block.level) || 1));
-      el = document.createElement("h" + level);
-    } else if (type === "bulletList" || type === "orderedList") {
-      el = document.createElement(type === "bulletList" ? "ul" : "ol");
-      for (const rawItem of block.items || []) {
-        const item = Array.isArray(rawItem) ? { children: rawItem, blocks: [] } : (rawItem || {});
-        const li = document.createElement("li");
-        li.appendChild(inlineToFragment(item.children || []));
-        for (const nested of item.blocks || []) {
-          if (nested && (nested.type === "bulletList" || nested.type === "orderedList" || nested.type === "taskList"))
-            li.appendChild(blockToElement(nested));
-        }
-        el.appendChild(li);
+      return "<h" + level + ">" + legacyInline(block.children) + "</h" + level + ">";
+    }
+    if (type === "bulletList") return legacyList(block, false);
+    if (type === "orderedList") return legacyList(block, true);
+    if (type === "taskList") return legacyList(block, false);
+    if (type === "blockquote") return "<blockquote>" + legacyInline(block.children) + "</blockquote>";
+    if (type === "codeBlock") return "<pre><code>" + escapeHtml(block.text || "") + "</code></pre>";
+    if (type === "divider") return "<hr>";
+    if (type === "image") {
+      const asset = state.assets.get(block.assetId);
+      return asset ? '<img src="' + escapeAttr(asset.path) + '" alt="' + escapeAttr(asset.name || "") + '">' : "<p>[图片缺失]</p>";
+    }
+    if (type === "table") {
+      const rows = (block.rows || []).map((row) => {
+        const cells = (Array.isArray(row) ? row : []).map((cell) => "<td>" + legacyInline(cell && cell.children ? cell.children : []) + "</td>").join("");
+        return "<tr>" + cells + "</tr>";
+      }).join("");
+      return "<table><tbody>" + rows + "</tbody></table>";
+    }
+    return "<p>" + legacyInline(block.children) + "</p>";
+  }
+  function legacyBlocksToHtml(blocks) {
+    if (!Array.isArray(blocks)) return defaultHtml();
+    return blocks.map(legacyBlock).join("\n");
+  }
+
+  // ---------- 源码标注：给源标签打上 srcId，映射回源码偏移/行号 ----------
+  function findTagEnd(source, start) {
+    let quote = "";
+    for (let i = start + 1; i < source.length; i++) {
+      const c = source[i];
+      if (quote) { if (c === quote) quote = ""; continue; }
+      if (c === '"' || c === "'") { quote = c; continue; }
+      if (c === ">") return i;
+    }
+    return -1;
+  }
+  function annotateHtml(source) {
+    let out = "", i = 0, id = 0, line = 1;
+    const map = {};
+    const countLines = (s) => (s.match(/\n/g) || []).length;
+    while (i < source.length) {
+      if (source.startsWith("<!--", i)) {
+        let end = source.indexOf("-->", i + 4);
+        end = end < 0 ? source.length : end + 3;
+        const chunk = source.slice(i, end);
+        out += chunk; line += countLines(chunk); i = end; continue;
       }
-      return el;
-    } else if (type === "taskList") {
-      el = document.createElement("ul");
-      el.className = "task-list";
-      for (const rawItem of block.items || []) {
-        const item = Array.isArray(rawItem) ? { checked: false, children: rawItem, blocks: [] } : (rawItem || {});
-        const li = document.createElement("li");
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = !!item.checked;
-        li.appendChild(cb);
-        li.appendChild(inlineToFragment(item.children || []));
-        for (const nested of item.blocks || []) {
-          if (nested && (nested.type === "bulletList" || nested.type === "orderedList" || nested.type === "taskList"))
-            li.appendChild(blockToElement(nested));
+      if (source[i] === "<") {
+        if (source[i + 1] === "/" || source[i + 1] === "!" || source[i + 1] === "?") {
+          const end = findTagEnd(source, i);
+          if (end < 0) { out += source.slice(i); break; }
+          const chunk = source.slice(i, end + 1);
+          out += chunk; line += countLines(chunk); i = end + 1; continue;
         }
-        el.appendChild(li);
+        const end = findTagEnd(source, i);
+        if (end < 0) { out += source.slice(i); break; }
+        const raw = source.slice(i, end + 1);
+        const m = raw.match(/^<\s*([a-zA-Z][\w:-]*)/);
+        if (!m) { out += raw; line += countLines(raw); i = end + 1; continue; }
+        const tag = m[1].toLowerCase();
+        id++;
+        const injected = /\/\s*>$/.test(raw)
+          ? raw.replace(/\/\s*>$/, ' data-lyra-src="' + id + '"/>')
+          : raw.replace(/>$/, ' data-lyra-src="' + id + '">');
+        out += injected;
+        map[id] = { start: i, end: end + 1, line: line, tag: tag };
+        line += countLines(raw);
+        i = end + 1;
+        if (tag === "script" || tag === "style" || tag === "textarea") {
+          try {
+            const re = new RegExp("</" + tag + "\\s*>", "i");
+            const cm = re.exec(source.slice(i));
+            if (cm) {
+              const closeStart = i + cm.index;
+              const closeEnd = closeStart + cm[0].length;
+              const chunk = source.slice(i, closeEnd);
+              out += chunk; line += countLines(chunk); i = closeEnd;
+            }
+          } catch { }
+        }
+        continue;
       }
-      return el;
-    } else if (type === "blockquote") {
-      el = document.createElement("blockquote");
-    } else if (type === "codeBlock") {
-      el = document.createElement("pre");
-      el.textContent = block.text || inlineText(block.children);
-      return el;
-    } else if (type === "divider") {
-      return makeDividerElement();
-    } else if (type === "image") {
-      return imageElement(block);
-    } else if (type === "table") {
-      return tableElement(block);
+      const next = source.indexOf("<", i);
+      const end = next < 0 ? source.length : next;
+      const chunk = source.slice(i, end);
+      out += chunk; line += countLines(chunk); i = end;
+    }
+    return { html: out, map };
+  }
+
+  // ---------- 注入预览的检查器 ----------
+  function inspectorScript() {
+    return `
+(function(){
+  var SOURCE = ${JSON.stringify(PREVIEW_SOURCE)};
+  var inspect = false, hovered = null, hoverOldOutline = "", hoverOldOffset = "";
+  function send(type, data) {
+    var msg = Object.assign({ source: SOURCE, type: type }, data || {});
+    try { parent.postMessage(msg, "*"); } catch(e) {}
+  }
+  function annotated(el) {
+    while (el && el !== document.documentElement) {
+      if (el.nodeType === 1 && el.hasAttribute && el.hasAttribute("data-lyra-src")) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+  function cssEscape(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+  }
+  function selectorOf(el) {
+    if (!el || el.nodeType !== 1) return "";
+    if (el.id) return "#" + cssEscape(el.id);
+    var parts = [];
+    while (el && el.nodeType === 1 && el !== document.documentElement) {
+      var part = el.tagName.toLowerCase();
+      if (el.classList && el.classList.length) part += "." + Array.prototype.map.call(el.classList, cssEscape).join(".");
+      var parent = el.parentElement;
+      if (parent) {
+        var same = Array.prototype.filter.call(parent.children, function(c){ return c.tagName === el.tagName; });
+        if (same.length > 1) part += ":nth-of-type(" + (same.indexOf(el) + 1) + ")";
+      }
+      parts.unshift(part);
+      if (el.id) { parts[0] = "#" + cssEscape(el.id); break; }
+      el = parent;
+    }
+    return parts.join(" > ");
+  }
+  var COMPUTED = ["display","flexDirection","justifyContent","alignItems","gap","padding","margin","width","height","fontSize","fontWeight","lineHeight","color","backgroundColor","borderRadius","textAlign","position","fontFamily"];
+  function pick(el) {
+    var cs = getComputedStyle(el);
+    var computed = {};
+    COMPUTED.forEach(function(p){ computed[p] = cs[p]; });
+    var text = (el.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 100);
+    return {
+      srcId: el.getAttribute("data-lyra-src") || "",
+      tag: el.tagName.toLowerCase(),
+      selector: selectorOf(el),
+      inlineStyle: el.getAttribute("style") || "",
+      computed: computed,
+      text: text
+    };
+  }
+  function clearHover() {
+    if (hovered) {
+      try { hovered.style.outline = hoverOldOutline; hovered.style.outlineOffset = hoverOldOffset; } catch(e) {}
+    }
+    hovered = null;
+  }
+  function setHover(el) {
+    if (hovered === el) return;
+    clearHover();
+    if (!el) return;
+    hovered = el;
+    hoverOldOutline = el.style.outline || "";
+    hoverOldOffset = el.style.outlineOffset || "";
+    el.style.outline = "2px solid #66ccff";
+    el.style.outlineOffset = "1px";
+  }
+  document.addEventListener("mouseover", function(e){
+    if (!inspect) return;
+    var el = annotated(e.target);
+    setHover(el);
+  }, true);
+  document.addEventListener("mouseout", function(e){
+    if (!inspect) return;
+    if (!e.relatedTarget) clearHover();
+  }, true);
+  document.addEventListener("click", function(e){
+    if (!inspect) return;
+    var el = annotated(e.target);
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setHover(el);
+    send("select", pick(el));
+  }, true);
+  window.addEventListener("message", function(e){
+    var d = e.data;
+    if (!d || d.source !== SOURCE) return;
+    if (d.type === "inspect") { inspect = !!d.value; if (!inspect) clearHover(); }
+    else if (d.type === "reselect") {
+      try {
+        var el = d.selector ? document.querySelector(d.selector) : null;
+        if (el) { setHover(el); var d = pick(el); d.reselect = true; send("select", d); }
+      } catch(err) {}
+    }
+  });
+  send("ready");
+})();
+`.replace(/<\/script>/gi, "<\\/script>");
+  }
+
+  const BASE_CSS = `
+html, body { min-height: 100%; }
+body {
+  margin: 0; padding: 24px; background: #ffffff; color: #1f2937;
+  font: 16px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+img { max-width: 100%; height: auto; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #d8dee8; padding: 6px 8px; }
+a { color: #1d8fc0; }
+blockquote { margin: 12px 0; padding: 4px 14px; border-left: 3px solid #66ccff; background: #f4f9fc; color: #53657a; }
+pre { background: #f4f6f9; border: 1px solid #e4e9f0; border-radius: 6px; padding: 12px; overflow: auto; }
+code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; padding: 1px 4px; border-radius: 4px; }
+`;
+
+  function injectPreview(sourceAnnotated, isDoc) {
+    const css = "<style>" + BASE_CSS + "</style>";
+    const script = "<script>" + inspectorScript() + "<\/script>";
+    let html = sourceAnnotated;
+    if (isDoc) {
+      if (/<head[\s>]/i.test(html)) html = html.replace(/<head([^>]*)>/i, "<head$1>" + css);
+      else html = css + html;
+      if (/<\/body>/i.test(html)) html = html.replace(/<\/body>/i, script + "</body>");
+      else html += script;
     } else {
-      el = document.createElement("p");
+      html = "<!doctype html><html><head><meta charset=\"utf-8\">" + css + "</head><body>" + html + script + "</body></html>";
     }
-    el.appendChild(inlineToFragment(block.children || []));
-    return el;
+    return html;
   }
 
-  function renderNote(note) {
-    const editor = $("editor");
-    editor.innerHTML = "";
-    const blocks = Array.isArray(note.blocks) ? note.blocks : [];
-    const list = blocks.length ? blocks : [{ id: uid("b"), type: "paragraph", children: [] }];
-    for (const block of list) editor.appendChild(blockToElement(block));
-    const last = editor.lastElementChild;
-    if (last && last.classList && last.classList.contains("divider-block")) {
-      const p = document.createElement("p"); p.innerHTML = "<br>"; editor.appendChild(p);
-    }
-    if (!editor.querySelector("p, h1, h2, h3, ul, ol, blockquote, pre, hr")) {
-      editor.innerHTML = "<p><br></p>";
+  // ---------- 预览 ----------
+  function schedulePreview(reselect = false) {
+    clearTimeout(state.previewTimer);
+    state.previewTimer = setTimeout(() => renderPreview(reselect), 140);
+  }
+  function renderPreview(reselect = false) {
+    try {
+      const source = $("sourceEditor").value;
+      const annotated = annotateHtml(source);
+      state.sourceMap = annotated.map;
+      let html = annotated.html;
+      // 包里保存的 assets/ 图片在预览中换成 data URL；源码里仍保留原路径。
+      for (const asset of state.assets.values()) {
+        if (!asset.path || !asset.base64) continue;
+        html = html.split(asset.path).join(assetDataUrl(asset));
+      }
+      const isDoc = /<html[\s>]|<!doctype/i.test(html);
+      const doc = injectPreview(html, isDoc);
+      state.pendingReselect = reselect ? state.selectedSelector : "";
+      const frame = $("previewFrame");
+      frame.onload = () => {
+        postToPreview("inspect", { value: state.inspectMode });
+        if (state.pendingReselect) {
+          postToPreview("reselect", { selector: state.pendingReselect });
+        }
+      };
+      frame.srcdoc = doc;
+    } catch (e) {
+      console.error(e);
     }
   }
+  function postToPreview(type, data) {
+    try {
+      const frame = $("previewFrame");
+      if (frame.contentWindow) frame.contentWindow.postMessage(Object.assign({ source: PREVIEW_SOURCE, type }, data || {}), "*");
+    } catch { }
+  }
 
-  // ---------- DOM -> 文档结构树 ----------
-  function parseInline(node, inherited) {
-    const out = [];
-    if (!node) return out;
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.nodeValue || "";
-      if (text) out.push({ type: "text", text, marks: inherited.slice() });
-      return out;
+  window.addEventListener("message", (event) => {
+    const frame = $("previewFrame");
+    if (!frame || event.source !== frame.contentWindow) return;
+    const data = event.data || {};
+    if (data.source !== PREVIEW_SOURCE) return;
+    if (data.type === "ready") {
+      postToPreview("inspect", { value: state.inspectMode });
+      if (state.pendingReselect) postToPreview("reselect", { selector: state.pendingReselect });
+    } else if (data.type === "select") {
+      applySelection(data, !!data.reselect);
     }
-    if (node.nodeType !== Node.ELEMENT_NODE) return out;
-    const tag = (node.tagName || "").toUpperCase();
-    if (tag === "BR") { out.push({ type: "hardBreak" }); return out; }
-    if (tag === "SCRIPT" || tag === "STYLE") return out;
-    const marks = inherited.slice();
-    if (tag === "STRONG" || tag === "B") marks.push({ type: "bold" });
-    else if (tag === "EM" || tag === "I") marks.push({ type: "italic" });
-    else if (tag === "U") marks.push({ type: "underline" });
-    else if (tag === "S" || tag === "STRIKE" || tag === "DEL") marks.push({ type: "strike" });
-    else if (tag === "CODE") marks.push({ type: "inlineCode" });
-    else if (tag === "A") marks.push({ type: "link", href: node.getAttribute("href") || "" });
-    else if (tag === "SPAN") {
-      const color = node.style && node.style.color;
-      const bg = node.style && node.style.backgroundColor;
-      if (color) marks.push({ type: "color", value: color });
-      if (bg) marks.push({ type: "highlight", value: bg });
+  });
+
+  // ---------- 检查器面板 ----------
+  function setInspectorEnabled(enabled) {
+    document.querySelectorAll("[data-style]").forEach((el) => { el.disabled = !enabled; });
+    $("jumpSourceBtn").disabled = !enabled;
+    $("clearStyleBtn").disabled = !enabled;
+  }
+  function clearSelection() {
+    state.selectedSrcId = null;
+    state.selectedSelector = "";
+    state.selectedLine = 0;
+    $("inspectorLine").textContent = "未选择元素";
+    $("selInfo").textContent = "点击预览中的元素进行检查；开启「检查元素」后才会拦截点击。";
+    $("sourcePos").textContent = "行 1";
+    setInspectorEnabled(false);
+  }
+  function infoHtml(data) {
+    return '<b>' + escapeHtml(data.tag || "") + "</b> · " +
+      escapeHtml(data.selector || "") +
+      (data.text ? '<br><span style="color:#6f8193">' + escapeHtml(data.text) + "</span>" : "");
+  }
+  function applySelection(data, isReselect) {
+    const entry = state.sourceMap[data.srcId];
+    if (!entry) return;
+    state.selectedSrcId = data.srcId;
+    state.selectedSelector = data.selector || "";
+    state.selectedLine = entry.line;
+    $("inspectorLine").textContent = "第 " + entry.line + " 行";
+    $("selInfo").innerHTML = infoHtml(data);
+    $("sourcePos").textContent = "行 " + entry.line;
+    syncInspector(data.computed || {});
+    setInspectorEnabled(true);
+    highlightLine(entry.line, !isReselect);
+  }
+  function toHexColor(value) {
+    if (!value) return "#ffffff";
+    if (/^#[0-9a-f]{6}$/i.test(value)) return value;
+    if (/^#[0-9a-f]{3}$/i.test(value)) {
+      return "#" + value[1] + value[1] + value[2] + value[2] + value[3] + value[3];
     }
-    for (const child of node.childNodes) {
-      for (const token of parseInline(child, marks)) out.push(token);
+    const m = String(value).match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+    if (m) {
+      const h = (n) => Number(n).toString(16).padStart(2, "0");
+      return "#" + h(m[1]) + h(m[2]) + h(m[3]);
+    }
+    return "#ffffff";
+  }
+  function syncInspector(computed) {
+    state.syncingControls = true;
+    try {
+      document.querySelectorAll("[data-style]").forEach((el) => {
+        const prop = el.dataset.style;
+        let value = computed[prop];
+        if (value == null || value === "") value = el.type === "color" ? "#ffffff" : "";
+        if (el.type === "range") {
+          const n = parseFloat(value);
+          el.value = Number.isFinite(n) ? String(Math.max(Number(el.min || 0), Math.min(Number(el.max || 100), n))) : "0";
+        } else if (el.type === "color") {
+          el.value = toHexColor(value);
+        } else if (el.tagName === "SELECT") {
+          const has = Array.from(el.options).some((o) => o.value === value || o.text === value);
+          if (has) el.value = value;
+        } else {
+          el.value = value;
+        }
+      });
+    } finally { state.syncingControls = false; }
+  }
+  function cssProp(prop) {
+    return String(prop).replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+  }
+  function parseStyleText(text) {
+    const out = {};
+    for (const part of String(text || "").split(";")) {
+      const idx = part.indexOf(":");
+      if (idx <= 0) continue;
+      const k = part.slice(0, idx).trim();
+      const v = part.slice(idx + 1).trim();
+      if (k) out[k] = v;
     }
     return out;
   }
-
-  function parseListItem(li) {
-    const children = [];
-    const blocks = [];
-    for (const child of li.childNodes) {
-      const tag = child.nodeType === Node.ELEMENT_NODE ? (child.tagName || "").toUpperCase() : "";
-      if (tag === "UL" || tag === "OL") {
-        const nested = blockFromElement(child);
-        if (nested) blocks.push(nested);
-      } else if (tag === "INPUT") {
-        continue;
-      } else {
-        for (const token of parseInline(child, [])) children.push(token);
-      }
+  function styleText(decls) {
+    return Object.keys(decls).map((k) => k + ": " + decls[k]).join("; ");
+  }
+  function setTagStyle(raw, declarations) {
+    const text = styleText(declarations);
+    if (!text) {
+      return raw.replace(/\sstyle\s*=\s*(["'])[\s\S]*?\1/i, "");
     }
-    return { children, blocks };
+    const attrValue = escapeAttr(text);
+    const existing = raw.match(/\sstyle\s*=\s*(["'])[\s\S]*?\1/i);
+    if (existing) return raw.replace(existing[0], ' style="' + attrValue + '"');
+    if (/\/\s*>$/.test(raw)) return raw.replace(/\/\s*>$/, ' style="' + attrValue + '"/>');
+    return raw.replace(/>$/, ' style="' + attrValue + '">');
   }
-
-  function blockFromElement(el) {
-    if (!el || el.nodeType !== Node.ELEMENT_NODE) {
-      if (el && el.nodeType === Node.TEXT_NODE && el.nodeValue.trim()) {
-        return { id: uid("b"), type: "paragraph", children: parseInline(el, []) };
-      }
-      return null;
+  function applyStyleObject(changes) {
+    if (!state.selectedSrcId) return;
+    const entry = state.sourceMap[state.selectedSrcId];
+    if (!entry) return;
+    const editor = $("sourceEditor");
+    const source = editor.value;
+    let tag = source.slice(entry.start, entry.end);
+    const styleMatch = tag.match(/\sstyle\s*=\s*(["'])([\s\S]*?)\1/i);
+    const decls = parseStyleText(styleMatch ? styleMatch[2] : "");
+    for (const [prop, value] of Object.entries(changes)) {
+      const key = cssProp(prop);
+      if (value === "" || value == null) delete decls[key];
+      else decls[key] = String(value);
     }
-    if (el.id === "editor") return null;
-    const tag = (el.tagName || "").toUpperCase();
-    if (tag === "H1" || tag === "H2" || tag === "H3" || tag === "H4" || tag === "H5" || tag === "H6") {
-      return { id: uid("b"), type: "heading", level: Number(tag.slice(1)), children: parseInline(el, []) };
+    tag = setTagStyle(tag, decls);
+    const next = source.slice(0, entry.start) + tag + source.slice(entry.end);
+    editor.value = next;
+    const note = state.notes.get(state.currentId);
+    if (note) note.html = next;
+    state.sourceMap = annotateHtml(next).map;
+    updateLineNumbers();
+    markDirty();
+    schedulePreview(true);
+    scheduleSave();
+  }
+  function clearInlineStyle() {
+    if (!state.selectedSrcId) return;
+    const entry = state.sourceMap[state.selectedSrcId];
+    if (!entry) return;
+    const editor = $("sourceEditor");
+    const source = editor.value;
+    const tag = source.slice(entry.start, entry.end);
+    const stripped = tag.replace(/\sstyle\s*=\s*(["'])[\s\S]*?\1/i, "");
+    const next = source.slice(0, entry.start) + stripped + source.slice(entry.end);
+    editor.value = next;
+    const note = state.notes.get(state.currentId);
+    if (note) note.html = next;
+    state.sourceMap = annotateHtml(next).map;
+    updateLineNumbers();
+    markDirty();
+    schedulePreview(true);
+    scheduleSave();
+  }
+
+  // ---------- 源码行号 ----------
+  function updateLineNumbers() {
+    const editor = $("sourceEditor");
+    const count = (editor.value.match(/\n/g) || []).length + 1;
+    const box = $("lineNumbers");
+    const frag = document.createDocumentFragment();
+    for (let i = 1; i <= count; i++) {
+      const d = document.createElement("div");
+      d.className = "line-number";
+      d.dataset.line = String(i);
+      d.textContent = String(i);
+      frag.appendChild(d);
     }
-    if (tag === "UL" || tag === "OL") {
-      const isTask = el.classList.contains("task-list") || !!el.querySelector("input[type=checkbox]");
-      const items = [];
-      for (const child of el.childNodes) {
-        const ctag = child.nodeType === Node.ELEMENT_NODE ? (child.tagName || "").toUpperCase() : "";
-        if (ctag === "LI") {
-          const parsed = parseListItem(child);
-          if (isTask) {
-            const cb = child.querySelector("input[type=checkbox]");
-            items.push({ checked: !!(cb && cb.checked), children: parsed.children, blocks: parsed.blocks });
-          } else {
-            items.push({ children: parsed.children, blocks: parsed.blocks });
-          }
-        } else if ((ctag === "UL" || ctag === "OL") && items.length) {
-          // contenteditable 的 indent 有时会把子列表生成在父 <ul> 的
-          // 兄弟位置，而不是塞进上一个 <li> 里；这里统一挂到上一个条目。
-          const nested = blockFromElement(child);
-          if (nested) items[items.length - 1].blocks.push(nested);
-        }
-      }
-      return { id: uid("b"), type: isTask ? "taskList" : tag === "UL" ? "bulletList" : "orderedList", items };
+    box.innerHTML = "";
+    box.appendChild(frag);
+    box.scrollTop = editor.scrollTop;
+  }
+  function highlightLine(line, focus) {
+    updateLineNumbers();
+    const editor = $("sourceEditor");
+    const lines = editor.value.split("\n");
+    let start = 0;
+    for (let i = 0; i < Math.min(line - 1, lines.length); i++) start += lines[i].length + 1;
+    const end = Math.min(editor.value.length, start + (lines[line - 1] || "").length);
+    document.querySelectorAll(".line-number").forEach((el) => el.classList.toggle("active", el.dataset.line === String(line)));
+    if (focus) {
+      try {
+        editor.focus();
+        editor.setSelectionRange(start, end);
+        const style = window.getComputedStyle(editor);
+        const lh = parseFloat(style.lineHeight) || 19.2;
+        editor.scrollTop = Math.max(0, (line - 1) * lh - editor.clientHeight * 0.35);
+      } catch { }
     }
-    if (el.classList && el.classList.contains("divider-block")) return { id: uid("b"), type: "divider" };
-    if (el.classList && el.classList.contains("image-block")) {
-      return { id: uid("b"), type: "image", assetId: el.dataset.assetId || "" };
-    }
-    if (tag === "TABLE") {
-      const rows = [];
-      for (const tr of el.querySelectorAll("tr")) {
-        const row = [];
-        for (const cell of tr.children) {
-          const ctag = (cell.tagName || "").toUpperCase();
-          if (ctag === "TD" || ctag === "TH") row.push({ children: parseInline(cell, []) });
-        }
-        if (row.length) rows.push(row);
-      }
-      return { id: uid("b"), type: "table", rows };
-    }
-    if (tag === "BLOCKQUOTE") return { id: uid("b"), type: "blockquote", children: parseInline(el, []) };
-    if (tag === "PRE") return { id: uid("b"), type: "codeBlock", text: el.textContent || "" };
-    if (tag === "HR") return { id: uid("b"), type: "divider" };
-    if (tag === "DIV" && el.querySelector("p,h1,h2,h3,ul,ol,blockquote,pre,hr")) {
-      const out = [];
-      for (const child of el.childNodes) {
-        const b = blockFromElement(child);
-        if (b) out.push(b);
-      }
-      return out;
-    }
-    return { id: uid("b"), type: "paragraph", children: parseInline(el, []) };
+    $("sourcePos").textContent = "行 " + line;
+    const active = document.querySelector('.line-number.active');
+    if (active && !focus) active.scrollIntoView({ block: "nearest" });
   }
 
-  function blocksFromEditor() {
-    const editor = $("editor");
-    const blocks = [];
-    for (const child of editor.childNodes) {
-      const b = blockFromElement(child);
-      if (Array.isArray(b)) blocks.push(...b);
-      else if (b) blocks.push(b);
-    }
-    if (!blocks.length) blocks.push({ id: uid("b"), type: "paragraph", children: [] });
-    return blocks;
-  }
-
-  // ---------- 段落样式：跟随当前段落的左侧按钮 ----------
-  let savedRange = null;
-  let activeBlock = null;
-
-  function topLevelBlock(node) {
-    const editor = $("editor");
-    let el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-    if (!el || !editor.contains(el)) return null;
-    while (el && el !== editor) {
-      if (el.parentElement === editor) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function blockLabel(el) {
-    if (!el) return "";
-    const tag = (el.tagName || "").toUpperCase();
-    if (tag === "H1") return "标题 1";
-    if (tag === "H2") return "标题 2";
-    if (tag === "H3") return "标题 3";
-    if (tag === "H4" || tag === "H5" || tag === "H6") return "标题";
-    if (tag === "BLOCKQUOTE") return "引用";
-    if (tag === "PRE") return "代码块";
-    if (tag === "UL" || tag === "OL") return "列表";
-    return "正文";
-  }
-
-  function hideBlockOverlays() {
-    $("blockHandle").hidden = true;
-    $("blockMenu").hidden = true;
-  }
-
-  function updateBlockHandle() {
-    const editor = $("editor");
-    const handle = $("blockHandle");
-    const menu = $("blockMenu");
-    const sel = window.getSelection();
-    if (!sel || !sel.rangeCount || !editor || !editor.contains(sel.anchorNode)) {
-      hideBlockOverlays();
-      return;
-    }
-    const block = topLevelBlock(sel.anchorNode);
-    if (!block) {
-      // 浏览器在空白 contenteditable 里可能把光标放到编辑器根节点，
-      // 先把它规整成一个段落，再显示段落样式按钮。
-      if (sel.anchorNode === editor && sel.rangeCount) {
-        try { document.execCommand("formatBlock", false, "p"); } catch { }
-        setTimeout(updateBlockHandle, 0);
-        return;
-      }
-      hideBlockOverlays();
-      return;
-    }
-    const tag = (block.tagName || "").toUpperCase();
-    if (block.classList && (block.classList.contains("divider-block") || block.classList.contains("image-block"))) {
-      hideBlockOverlays();
-      return;
-    }
-    if (tag === "UL" || tag === "OL" || tag === "HR" || tag === "IMG" || tag === "TABLE") {
-      hideBlockOverlays();
-      return;
-    }
-    // 空段落/空标题不显示段落把手：否则分割线后面的空行会在分割线旁边
-    // 出现一个看起来属于分割线的按钮。
-    if (!(block.textContent || "").trim() && !block.querySelector("img,video,table")) {
-      hideBlockOverlays();
-      return;
-    }
-    activeBlock = block;
-    savedRange = sel.getRangeAt(0).cloneRange();
-    const wrap = document.querySelector(".editor-wrap");
-    const wr = wrap.getBoundingClientRect();
-    const br = block.getBoundingClientRect();
-    const label = blockLabel(block);
-    handle.textContent = "⋮";
-    handle.title = "段落样式：" + label;
-    handle.style.left = Math.max(2, Math.round(br.left - wr.left - 26)) + "px";
-    handle.style.top = Math.max(0, Math.round(br.top - wr.top + 1)) + "px";
-    handle.hidden = false;
-    menu.hidden = true;
-    document.querySelectorAll("#blockMenu button[data-block]").forEach((btn) => {
-      const tag = (block.tagName || "").toLowerCase();
-      const active = (tag === "h" + (btn.dataset.block || "").slice(1) && btn.dataset.block.startsWith("h")) ||
-        (tag === "p" && btn.dataset.block === "p") ||
-        (tag === "blockquote" && btn.dataset.block === "blockquote") ||
-        (tag === "pre" && btn.dataset.block === "pre");
-      btn.classList.toggle("active", !!active);
-    });
-  }
-
-  function restoreSelection() {
-    const editor = $("editor");
-    editor.focus();
-    if (!savedRange) return;
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(savedRange);
-  }
-
-  function applyBlockType(tag) {
-    try {
-      restoreSelection();
-      document.execCommand("formatBlock", false, tag);
-      markDirty();
-      setTimeout(updateBlockHandle, 30);
-    } catch { }
-  }
-
-  function showBlockMenu() {
-    const handle = $("blockHandle");
-    const menu = $("blockMenu");
-    if (handle.hidden) return;
-    const wrap = document.querySelector(".editor-wrap");
-    const wr = wrap.getBoundingClientRect();
-    const hr = handle.getBoundingClientRect();
-    menu.style.left = Math.max(4, Math.round(hr.left - wr.left)) + "px";
-    menu.style.top = Math.round(hr.bottom - wr.top + 4) + "px";
-    menu.hidden = false;
-  }
-
-  function insertTaskList() {
-    try {
-      document.execCommand("insertHTML", false,
-        '<ul class="task-list"><li><input type="checkbox"> 待办事项</li></ul>');
-      markDirty();
-      $("editor").focus();
-    } catch { }
-  }
-
-  function closestCode(node) {
-    let el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-    const editor = $("editor");
-    while (el && el !== editor) {
-      if (el.nodeType === Node.ELEMENT_NODE && (el.tagName || "").toUpperCase() === "CODE") return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function toggleInlineCode() {
-    try {
-      const editor = $("editor");
-      const sel = window.getSelection();
-      if (!sel || !sel.rangeCount) return;
-      const range = sel.getRangeAt(0);
-      if (!editor.contains(range.commonAncestorContainer)) return;
-      if (range.collapsed) return;
-
-      const startCode = closestCode(range.startContainer);
-      const endCode = closestCode(range.endContainer);
-      // 选中内容已经在同一个 <code> 里：再次点击是取消，不是套第二层。
-      if (startCode && startCode === endCode) {
-        const parent = startCode.parentNode;
-        while (startCode.firstChild) parent.insertBefore(startCode.firstChild, startCode);
-        parent.removeChild(startCode);
-        parent.normalize();
-        markDirty();
-        setTimeout(updateBlockHandle, 0);
-        return;
-      }
-      // 跨段落/跨代码边界时不做复杂拼接，避免生成坏结构。
-      if (!topLevelBlock(range.commonAncestorContainer)) return;
-
-      const fragment = range.extractContents();
-      for (const oldCode of Array.from(fragment.querySelectorAll("code"))) {
-        while (oldCode.firstChild) oldCode.parentNode.insertBefore(oldCode.firstChild, oldCode);
-        oldCode.parentNode.removeChild(oldCode);
-      }
-      const code = document.createElement("code");
-      code.appendChild(fragment);
-      range.insertNode(code);
-      const after = document.createRange();
-      after.selectNodeContents(code);
-      sel.removeAllRanges();
-      sel.addRange(after);
-      markDirty();
-      setTimeout(updateBlockHandle, 0);
-    } catch { }
-  }
-
-  function insertLink() {
-    try {
-      const url = prompt("输入链接地址（https://…）", "https://");
-      if (!url || url === "https://") return;
-      document.execCommand("createLink", false, url);
-      markDirty();
-    } catch { }
-  }
-
-  function insertDividerBlock() {
-    try {
-      const editor = $("editor");
-      const sel = window.getSelection();
-      let block = sel && sel.rangeCount ? topLevelBlock(sel.anchorNode) : null;
-      const wrap = makeDividerElement();
-      if (block && block.parentElement === editor) {
-        editor.insertBefore(wrap, block.nextSibling);
-      } else {
-        editor.appendChild(wrap);
-      }
-      const p = document.createElement("p");
-      p.innerHTML = "<br>";
-      editor.insertBefore(p, wrap.nextSibling);
-      const range = document.createRange();
-      range.setStart(p, 0);
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      editor.focus();
-      markDirty();
-      hideBlockOverlays();
-    } catch { }
-  }
-
-  function insertElementAfterCurrent(el) {
-    const editor = $("editor");
-    const sel = window.getSelection();
-    const block = sel && sel.rangeCount ? topLevelBlock(sel.anchorNode) : null;
-    if (block && block.parentElement === editor) editor.insertBefore(el, block.nextSibling);
-    else editor.appendChild(el);
-    return editor;
-  }
-
-  function placeCaretInNextParagraph(el) {
-    const editor = $("editor");
-    let next = el.nextElementSibling;
-    if (!next || (next.tagName || "").toUpperCase() !== "P") {
-      const p = document.createElement("p");
-      p.innerHTML = "<br>";
-      editor.insertBefore(p, el.nextSibling);
-      next = p;
-    }
-    const range = document.createRange();
-    range.setStart(next, 0);
-    range.collapse(true);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-    editor.focus();
-  }
-
-  function insertImageBlock(asset) {
-    try {
-      const figure = imageElement({ assetId: asset.id });
-      insertElementAfterCurrent(figure);
-      placeCaretInNextParagraph(figure);
-      markDirty();
-      hideBlockOverlays();
-    } catch { }
-  }
-
-  async function handleImageFile(file) {
-    if (!file || !/^image\//.test(file.type || "")) return;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const asset = await addAsset(bytes, file.name || "图片", file.type || "image/png");
-    insertImageBlock(asset);
-  }
-
-  function insertTableBlock() {
-    try {
-      const spec = prompt("表格尺寸（行x列）", "3x3");
-      if (!spec) return;
-      const m = String(spec).match(/(\d+)\s*[x×,，]\s*(\d+)/i);
-      if (!m) return;
-      const rows = Math.max(1, Math.min(20, parseInt(m[1], 10)));
-      const cols = Math.max(1, Math.min(12, parseInt(m[2], 10)));
-      const cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ({ children: [] })));
-      const table = tableElement({ rows: cells });
-      insertElementAfterCurrent(table);
-      placeCaretInNextParagraph(table);
-      // 把光标放进第一个单元格，方便直接输入。
-      const first = table.querySelector("td");
-      if (first) {
-        const r = document.createRange(); r.setStart(first, 0); r.collapse(true);
-        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      }
-      markDirty();
-      hideBlockOverlays();
-    } catch { }
-  }
-
-  function normalizeListDom() {
-    const editor = $("editor");
-    if (!editor) return;
-    // contenteditable 的 indent 常把子列表放在父列表的兄弟位置；
-    // 归一到“子列表放进上一个 li”的标准结构，方便再次编辑。
-    for (const list of Array.from(editor.querySelectorAll("ul,ol"))) {
-      for (const child of Array.from(list.children)) {
-        const tag = (child.tagName || "").toUpperCase();
-        if ((tag === "UL" || tag === "OL") && child.previousElementSibling &&
-            (child.previousElementSibling.tagName || "").toUpperCase() === "LI") {
-          child.previousElementSibling.appendChild(child);
-        }
-      }
-    }
-  }
-
-  function applyColor(kind, value) {
-    try {
-      document.execCommand("styleWithCSS", false, true);
-      document.execCommand(kind === "highlight" ? "hiliteColor" : "foreColor", false, value);
-      markDirty();
-    } catch { }
-  }
-
-  // ---------- 笔记/元数据 ----------
-  function currentMeta() {
-    return state.manifest && state.manifest.notes.find((n) => n.id === state.currentId) || null;
-  }
-
-  function setSaveState(text, cls) {
-    const el = $("saveState");
-    el.textContent = text;
-    el.className = "save-state" + (cls ? " " + cls : "");
-  }
-
+  // ---------- 源码编辑 / 热重载 ----------
   function markDirty() {
     state.dirty = true;
-    setSaveState("未保存", "saving");
+    $("saveState").textContent = "未保存";
+    $("saveState").className = "save-state saving";
+  }
+  function scheduleSave() {
     clearTimeout(state.saveTimer);
-    state.saveTimer = setTimeout(() => { saveNow().catch(showError); }, 1000);
+    state.saveTimer = setTimeout(() => saveNow().catch(showError), 1000);
   }
-
-  function noteTitleFromEditor() {
-    const t = $("noteTitle").value.trim();
-    return t || "未命名笔记";
-  }
-
-  function syncCurrentNote() {
-    const meta = currentMeta();
-    if (!meta) return;
-    meta.title = noteTitleFromEditor();
-    meta.updatedAt = nowIso();
-    let content = state.contents.get(meta.id);
-    if (!content) { content = makeDefaultNote(meta.title); content.id = meta.id; state.contents.set(meta.id, content); }
-    content.title = meta.title;
-    content.blocks = blocksFromEditor();
+  function currentNote() { return state.notes.get(state.currentId); }
+  function syncCurrent() {
+    const note = currentNote();
+    if (!note) return;
+    note.html = $("sourceEditor").value;
+    note.meta.title = ($("noteTitle").value || "").trim() || "未命名笔记";
+    note.meta.updatedAt = nowIso();
+    state.manifest.notes = Array.from(state.notes.values()).map((n) => n.meta);
     state.manifest.updatedAt = nowIso();
   }
 
   // ---------- 保存 ----------
   async function saveNow() {
-    if (state.saveInFlight) return;
-    if (!state.manifest) return;
+    if (state.saveInFlight || !state.manifest) return;
     state.saveInFlight = true;
     clearTimeout(state.saveTimer);
     try {
-      syncCurrentNote();
-      setSaveState("保存中…", "saving");
-      const assets = Array.from(state.assets.values());
-      state.manifest.assets = assets.map((a) => ({
+      syncCurrent();
+      $("saveState").textContent = "保存中…";
+      $("saveState").className = "save-state saving";
+      state.manifest.assets = Array.from(state.assets.values()).map((a) => ({
         id: a.id, path: a.path, name: a.name, mime: a.mime, size: a.size, sha256: a.sha256,
       }));
       const zip = new JSZip();
       zip.file("mimetype", MIME, { compression: "STORE" });
       zip.file("manifest.json", JSON.stringify(state.manifest, null, 2));
-      for (const [id, note] of state.contents.entries()) {
-        zip.file("notes/" + id + ".json", JSON.stringify(note, null, 2));
+      for (const [id, note] of state.notes.entries()) {
+        zip.file("notes/" + id + ".html", note.html || "");
       }
-      for (const asset of assets) {
+      for (const asset of state.assets.values()) {
         zip.file(asset.path, base64ToBytes(asset.base64), { binary: true });
       }
       const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
       const res = await hostCall("host.workspace.save", { data: bytesToBase64(bytes) });
       if (!res || !res.ok) throw new Error((res && res.error) || "保存失败");
       state.dirty = false;
-      setSaveState("已保存 " + new Date().toLocaleTimeString().slice(0, 5), "");
-      renderNoteList();
+      $("saveState").textContent = "已保存 " + new Date().toLocaleTimeString().slice(0, 5);
+      $("saveState").className = "save-state";
+      refreshNoteSelect();
     } catch (e) {
-      setSaveState("保存失败", "error");
+      $("saveState").textContent = "保存失败";
+      $("saveState").className = "save-state error";
       throw e;
     } finally {
       state.saveInFlight = false;
     }
   }
 
-  // ---------- 界面 ----------
-  function renderNoteList() {
-    const list = $("noteList");
-    const q = ($("searchNotes").value || "").trim().toLowerCase();
-    const notes = (state.manifest ? state.manifest.notes.slice() : [])
-      .sort((a, b) => (a.order || 0) - (b.order || 0))
-      .filter((n) => !q || (n.title || "").toLowerCase().includes(q));
-    $("noteCount").textContent = String(state.manifest ? state.manifest.notes.length : 0);
-    list.innerHTML = "";
-    for (const n of notes) {
-      const item = document.createElement("div");
-      item.className = "note-item" + (n.id === state.currentId ? " active" : "");
-      item.innerHTML = `<div class="n-title">${escapeHtml(n.title || "未命名笔记")}</div><div class="n-date">${escapeHtml(fmtDate(n.updatedAt))}</div>`;
-      item.addEventListener("click", () => selectNote(n.id).catch(showError));
-      list.appendChild(item);
+  // ---------- 笔记本 / 笔记管理 ----------
+  function refreshNoteSelect() {
+    const sel = $("noteSelect");
+    const current = state.currentId;
+    sel.innerHTML = "";
+    for (const [id, note] of state.notes.entries()) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = note.meta.title || "未命名笔记";
+      sel.appendChild(opt);
     }
+    if (current) sel.value = current;
   }
-
-  function fillEditorFromCurrent() {
-    const meta = currentMeta();
-    if (!meta) return;
-    const content = state.contents.get(meta.id) || makeDefaultNote(meta.title);
-    state.contents.set(meta.id, content);
-    $("noteTitle").value = meta.title || content.title || "未命名笔记";
-    renderNote(content);
+  function showCurrentNote() {
+    const note = currentNote();
+    if (!note) return;
+    $("noteTitle").value = note.meta.title || "未命名笔记";
+    $("sourceEditor").value = note.html || "";
+    updateLineNumbers();
+    clearSelection();
+    renderPreview(false);
+    refreshNoteSelect();
   }
-
-  async function selectNote(id) {
-    if (id === state.currentId) return;
-    if (state.dirty) await saveNow();
+  function selectNote(id) {
+    if (!state.notes.has(id)) return;
+    if (state.dirty) syncCurrent();
     state.currentId = id;
-    const meta = currentMeta();
-    if (!meta) return;
-    $("noteTitle").value = meta.title || "未命名笔记";
-    fillEditorFromCurrent();
-    renderNoteList();
+    showCurrentNote();
   }
-
-  async function createNote() {
-    try {
-      if (state.dirty) await saveNow();
-      const note = makeDefaultNote("未命名笔记");
-      const now = nowIso();
-      const meta = {
-        id: note.id, title: note.title, parentId: null,
-        order: state.manifest.notes.length,
-        createdAt: now, updatedAt: now, tags: [], pinned: false,
-      };
-      state.manifest.notes.push(meta);
-      state.contents.set(note.id, note);
-      state.currentId = note.id;
-      $("noteTitle").value = note.title;
-      fillEditorFromCurrent();
-      renderNoteList();
-      markDirty();
-      $("noteTitle").focus();
-      $("noteTitle").select();
-    } catch (e) { showError(e); }
-  }
-
-  async function deleteNote() {
-    const meta = currentMeta();
-    if (!meta) return;
-    if (state.manifest.notes.length <= 1) { alert("至少保留一篇笔记"); return; }
-    if (!confirm("删除笔记“" + (meta.title || "未命名笔记") + "”？")) return;
-    state.manifest.notes = state.manifest.notes.filter((n) => n.id !== meta.id);
-    state.contents.delete(meta.id);
-    const next = state.manifest.notes.slice().sort((a, b) => (a.order || 0) - (b.order || 0))[0];
-    state.currentId = next ? next.id : null;
-    if (next) fillEditorFromCurrent();
-    renderNoteList();
+  function createNote() {
+    syncCurrent();
+    const n = defaultNote("新笔记");
+    n.meta.order = state.notes.size;
+    state.notes.set(n.meta.id, n);
+    state.manifest.notes = Array.from(state.notes.values()).map((x) => x.meta);
+    state.currentId = n.meta.id;
+    showCurrentNote();
     markDirty();
+    scheduleSave();
+    $("noteTitle").focus();
+    $("noteTitle").select();
+  }
+  function deleteNote() {
+    if (state.notes.size <= 1) { alert("至少保留一篇笔记"); return; }
+    const note = currentNote();
+    if (!note) return;
+    if (!confirm("删除笔记“" + (note.meta.title || "未命名笔记") + "”？")) return;
+    state.notes.delete(state.currentId);
+    state.manifest.notes = Array.from(state.notes.values()).map((n) => n.meta);
+    const next = Array.from(state.notes.keys())[0];
+    state.currentId = next;
+    showCurrentNote();
+    markDirty();
+    scheduleSave();
   }
 
-  // ---------- 打开/初始化 ----------
+  // ---------- 加载 .lyrnb ----------
   async function loadPackage(bytes) {
     const zip = await JSZip.loadAsync(bytes);
     const mf = zip.file("manifest.json");
     if (!mf) throw new Error("缺少 manifest.json");
     const manifest = JSON.parse(await mf.async("string"));
     if (manifest.format !== FORMAT) throw new Error("不是 .lyrnb 笔记本文件");
-    if (Number(manifest.formatVersion) > FORMAT_VERSION) throw new Error("这个笔记本由更高版本创建，请升级主程序");
-    if (!Array.isArray(manifest.notes) || manifest.notes.length === 0) {
-      manifest.notes = [];
-    }
+    if (Number(manifest.formatVersion) > FORMAT_VERSION) throw new Error("这个笔记本由更高版本创建，请升级扩展");
     const assets = new Map();
     for (const asset of (Array.isArray(manifest.assets) ? manifest.assets : [])) {
       try {
@@ -924,21 +744,34 @@
         assets.set(asset.id, Object.assign({}, asset, { base64: bytesToBase64(bytes) }));
       } catch { }
     }
-    const contents = new Map();
-    for (const meta of manifest.notes) {
-      const f = zip.file("notes/" + meta.id + ".json");
-      if (!f) {
-        const n = makeDefaultNote(meta.title);
-        n.id = meta.id;
-        contents.set(meta.id, n);
+    state.assets = assets;
+    const notes = new Map();
+    for (const meta of (Array.isArray(manifest.notes) ? manifest.notes : [])) {
+      let html = "";
+      const htmlFile = zip.file("notes/" + meta.id + ".html");
+      const jsonFile = zip.file("notes/" + meta.id + ".json");
+      if (htmlFile) {
+        html = await htmlFile.async("string");
+      } else if (jsonFile) {
+        try {
+          const legacy = JSON.parse(await jsonFile.async("string"));
+          html = legacyBlocksToHtml(legacy.blocks);
+        } catch { html = defaultHtml(); }
       } else {
-        contents.set(meta.id, JSON.parse(await f.async("string")));
+        html = defaultHtml();
       }
+      meta.type = "html";
+      notes.set(meta.id, { meta, html });
+    }
+    if (!notes.size) {
+      const n = defaultNote("新笔记");
+      notes.set(n.meta.id, n);
+      manifest.notes = [n.meta];
     }
     state.manifest = manifest;
-    state.contents = contents;
-    state.assets = assets;
-    state.currentId = manifest.notes[0].id;
+    state.notes = notes;
+    state.manifest.notes = Array.from(notes.values()).map((n) => n.meta);
+    state.currentId = Array.from(notes.keys())[0];
   }
 
   async function init() {
@@ -946,26 +779,20 @@
     const res = await hostCall("host.workspace.load");
     if (!res || !res.ok) throw new Error((res && res.error) || "读取笔记本失败");
     if (!res.data) {
-      const d = makeDefaultManifest();
+      const d = defaultManifest();
       state.manifest = d.manifest;
-      state.contents = d.notes;
+      state.notes = d.notes;
       state.assets = new Map();
       state.currentId = d.manifest.notes[0].id;
-      await saveNow();
     } else {
       await loadPackage(base64ToBytes(res.data));
     }
-    if (!state.manifest.notes.length) {
-      const t = makeDefaultNote("第一篇笔记");
-      state.manifest.notes.push({ id: t.id, title: t.title, parentId: null, order: 0, createdAt: nowIso(), updatedAt: nowIso(), tags: [], pinned: false });
-      state.contents.set(t.id, t);
-      state.currentId = t.id;
-    }
-    if (!state.currentId) state.currentId = state.manifest.notes[0].id;
     $("notebookTitle").value = state.manifest.title || "未命名笔记本";
-    fillEditorFromCurrent();
-    renderNoteList();
-    setSaveState("已保存");
+    showCurrentNote();
+    setInspectorEnabled(false);
+    $("saveState").textContent = "已保存";
+    $("saveState").className = "save-state";
+    if (!res.data) await saveNow();
   }
 
   function showError(e) {
@@ -975,148 +802,88 @@
 
   // ---------- 事件 ----------
   function bind() {
-    $("newNoteBtn").addEventListener("click", createNote);
-    $("deleteNoteBtn").addEventListener("click", deleteNote);
-    $("searchNotes").addEventListener("input", renderNoteList);
-    $("noteTitle").addEventListener("input", markDirty);
     $("notebookTitle").addEventListener("input", () => {
       if (!state.manifest) return;
       state.manifest.title = $("notebookTitle").value.trim() || "未命名笔记本";
-      state.manifest.updatedAt = nowIso();
       markDirty();
+      scheduleSave();
     });
-    $("editor").addEventListener("input", () => {
+    $("noteTitle").addEventListener("input", () => {
+      const note = currentNote();
+      if (!note) return;
+      note.meta.title = $("noteTitle").value.trim() || "未命名笔记";
+      refreshNoteSelect();
       markDirty();
-      requestAnimationFrame(updateBlockHandle);
+      scheduleSave();
     });
-    $("editor").addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveNow().catch(showError); return; }
+    $("noteSelect").addEventListener("change", (e) => selectNote(e.target.value));
+    $("newNoteBtn").addEventListener("click", createNote);
+    $("deleteNoteBtn").addEventListener("click", deleteNote);
+    $("sourceEditor").addEventListener("input", () => {
+      const note = currentNote();
+      if (note) note.html = $("sourceEditor").value;
+      updateLineNumbers();
+      clearSelection();
+      markDirty();
+      schedulePreview(false);
+      scheduleSave();
+    });
+    $("sourceEditor").addEventListener("scroll", () => {
+      $("lineNumbers").scrollTop = $("sourceEditor").scrollTop;
+    });
+    $("sourceEditor").addEventListener("keydown", (e) => {
       if (e.key === "Tab") {
-        const sel = window.getSelection();
-        const block = sel && sel.rangeCount ? topLevelBlock(sel.anchorNode) : null;
-        const tag = block ? (block.tagName || "").toUpperCase() : "";
-        if (tag === "UL" || tag === "OL") {
-          e.preventDefault();
-          document.execCommand(e.shiftKey ? "outdent" : "indent", false, null);
-          setTimeout(normalizeListDom, 0);
-          markDirty();
-          setTimeout(updateBlockHandle, 0);
-        }
-      }
-    });
-    document.querySelectorAll(".toolbar button[data-cmd]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const cmd = btn.dataset.cmd;
-        document.execCommand(cmd, false, null);
-        if (cmd === "indent" || cmd === "outdent") setTimeout(normalizeListDom, 0);
-        hideBlockOverlays();
-        setTimeout(updateBlockHandle, 0);
-        markDirty();
-        $("editor").focus();
-      });
-    });
-    document.querySelectorAll(".toolbar button[data-action]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const action = btn.dataset.action;
-        if (action === "inlineCode") toggleInlineCode();
-        else if (action === "link") insertLink();
-        else if (action === "taskList") insertTaskList();
-        else if (action === "divider") insertDividerBlock();
-        else if (action === "image") $("imageInput").click();
-        else if (action === "table") insertTableBlock();
-        $("editor").focus();
-      });
-    });
-    $("blockHandle").addEventListener("mousedown", (e) => e.preventDefault());
-    $("blockHandle").addEventListener("click", (e) => {
-      e.preventDefault();
-      showBlockMenu();
-    });
-    $("blockMenu").addEventListener("mousedown", (e) => e.preventDefault());
-    document.querySelectorAll("#blockMenu button[data-block]").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
         e.preventDefault();
-        applyBlockType(btn.dataset.block);
-        $("blockMenu").hidden = true;
+        const el = $("sourceEditor");
+        const start = el.selectionStart, end = el.selectionEnd;
+        el.value = el.value.slice(0, start) + "  " + el.value.slice(end);
+        el.selectionStart = el.selectionEnd = start + 2;
+        el.dispatchEvent(new Event("input"));
+      }
+    });
+    $("sourceEditor").addEventListener("click", () => {
+      const line = $("sourceEditor").value.slice(0, $("sourceEditor").selectionStart).split("\n").length;
+      highlightLine(line, false);
+    });
+    $("reloadBtn").addEventListener("click", () => renderPreview(false));
+    $("inspectBtn").addEventListener("click", () => {
+      state.inspectMode = !state.inspectMode;
+      $("inspectBtn").classList.toggle("active", state.inspectMode);
+      postToPreview("inspect", { value: state.inspectMode });
+    });
+    $("jumpSourceBtn").addEventListener("click", () => {
+      if (state.selectedLine) highlightLine(state.selectedLine, true);
+    });
+    $("clearStyleBtn").addEventListener("click", clearInlineStyle);
+    document.querySelectorAll("[data-style]").forEach((el) => {
+      const ev = (el.tagName === "SELECT" || el.type === "color" || el.type === "text") ? "change" : "input";
+      el.addEventListener(ev, () => {
+        if (state.syncingControls || !state.selectedSrcId) return;
+        const prop = el.dataset.style;
+        let value = el.value;
+        if (el.type === "range") value = value + "px";
+        applyStyleObject({ [prop]: value });
       });
     });
-    document.addEventListener("selectionchange", () => updateBlockHandle());
-    document.addEventListener("mousedown", (e) => {
-      const wrap = document.querySelector(".editor-wrap");
-      if (wrap && !wrap.contains(e.target)) hideBlockOverlays();
+    document.querySelectorAll("[data-flex]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const mode = btn.dataset.flex;
+        const [dir, align] = mode.split("-");
+        const obj = {
+          display: "flex",
+          flexDirection: dir,
+          justifyContent: align === "between" ? "space-between" : align === "center" ? "center" : "flex-start",
+          alignItems: dir === "row" ? "center" : "center",
+          gap: "12px",
+        };
+        applyStyleObject(obj);
+      });
     });
-    $("editor").addEventListener("click", (e) => {
-      const imgRemove = e.target && e.target.closest ? e.target.closest(".image-remove") : null;
-      if (imgRemove) {
-        const wrap = imgRemove.closest(".image-block");
-        if (wrap) { wrap.remove(); markDirty(); hideBlockOverlays(); }
-        return;
-      }
-      const remove = e.target && e.target.closest ? e.target.closest(".divider-remove") : null;
-      if (remove) {
-        const wrap = remove.closest(".divider-block");
-        if (wrap) { wrap.remove(); markDirty(); hideBlockOverlays(); }
-        return;
-      }
-      const divider = e.target && e.target.closest ? e.target.closest(".divider-block") : null;
-      if (divider) {
-        e.preventDefault();
-        const next = divider.nextElementSibling;
-        const p = next && (next.tagName || "").toUpperCase() === "P" ? next : document.createElement("p");
-        if (!p.parentElement) { p.innerHTML = "<br>"; divider.parentElement.insertBefore(p, divider.nextSibling); }
-        const range = document.createRange();
-        range.setStart(p, 0);
-        range.collapse(true);
-        const sel2 = window.getSelection();
-        sel2.removeAllRanges();
-        sel2.addRange(range);
-        $("editor").focus();
-        hideBlockOverlays();
-      }
-    });
-    $("editor").addEventListener("scroll", updateBlockHandle);
-    window.addEventListener("resize", updateBlockHandle);
-    $("editor").addEventListener("change", (e) => {
-      if (e.target && e.target.type === "checkbox") markDirty();
-    });
-    $("textColor").addEventListener("input", (e) => applyColor("text", e.target.value));
-    $("highlightColor").addEventListener("input", (e) => applyColor("highlight", e.target.value));
-    $("imageInput").addEventListener("change", async (e) => {
-      const file = e.target.files && e.target.files[0];
-      e.target.value = "";
-      if (file) await handleImageFile(file).catch(showError);
-    });
-    $("editor").addEventListener("paste", async (e) => {
-      const dt = e.clipboardData || window.clipboardData;
-      if (dt && dt.items) {
-        for (const item of dt.items) {
-          if (item.type && item.type.startsWith("image/")) {
-            const file = item.getAsFile();
-            if (file) { e.preventDefault(); await handleImageFile(file).catch(showError); return; }
-          }
-        }
-      }
-      // 粘贴文本最终仍会被序列化成结构树，避免把外部 HTML 原样存进文件。
-      const text = dt.getData("text/plain");
-      if (text) { e.preventDefault(); document.execCommand("insertText", false, text); }
-    });
-    $("editor").addEventListener("dragover", (e) => {
-      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) e.preventDefault();
-    });
-    $("editor").addEventListener("drop", async (e) => {
-      const files = e.dataTransfer && e.dataTransfer.files;
-      if (!files || !files.length) return;
-      const imgs = Array.from(files).filter((f) => /^image\//.test(f.type || ""));
-      if (!imgs.length) return;
-      e.preventDefault();
-      for (const f of imgs) await handleImageFile(f).catch(showError);
-    });
-    window.addEventListener("beforeunload", () => {
-      if (!state.dirty) return;
-      try { saveNow(); } catch { }
-    });
+    window.addEventListener("beforeunload", () => { try { saveNow(); } catch { } });
+    window.addEventListener("resize", () => { });
   }
 
   bind();
+  window.__lyraDebug = { state, applyStyleObject, applySelection, renderPreview };
   init().catch(showError);
 })();
