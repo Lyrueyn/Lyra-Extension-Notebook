@@ -7,8 +7,12 @@
 - 左侧「笔记」Tab：打开已有 `.lyrnb` / 新建笔记本
 - 一个笔记本内多篇笔记
 - 三栏编辑器：左 HTML 源码、中实时预览、右 Dev Tool 调参
+- CodeMirror 5 HTML/CSS/JS 语法高亮、行号、括号匹配、标签自动闭合
+- 基础补全：Ctrl+Space 手动触发，输入 `<`、空格、`=`、引号时自动提示
 - 源码修改后自动热重载预览
-- Dev Tool 检查元素：点击预览元素，左侧跳到对应源码行，右侧调 style/布局/子元素对齐
+- Dev Tool 检查元素：点击预览元素，左侧跳到对应源码行
+- 84 个 CSS 属性控件（Layout / Flex+Grid / Size / Spacing / Typography / Background+Border / Effects）+ 任意自定义属性，全部英文属性名
+- 右侧可调 flex/grid 布局、子元素对齐、间距、字体、颜色、圆角、变换、过渡、滤镜等，修改直接写回源码 inline style
 - 一个笔记就是一段 HTML/CSS，不再受自定义块语法限制
 - 一个 `.lyrnb` 仍包含多篇 HTML 笔记，支持旧版块格式自动迁移
 - 自动保存，宿主原子写回

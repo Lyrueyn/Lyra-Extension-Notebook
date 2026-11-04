@@ -109,3 +109,63 @@ button.active { background: #24465b; border-color: #3e7899; color: var(--accent)
   .workspace { grid-template-columns: 34% 1fr; }
   .inspector-pane { display: none; }
 }
+
+/* CodeMirror */
+.workspace { grid-template-columns: minmax(280px, 33%) minmax(320px, 1fr) 350px; }
+.code-wrap { position: relative; }
+.source-editor { height: 100%; }
+.CodeMirror { height: 100%; width: 100%; background: #0a0f15; color: #d8e4ef; font: 12.5px/1.65 Consolas, "Cascadia Mono", monospace; }
+.CodeMirror-scroll { min-height: 100%; }
+.CodeMirror-gutters { background: #0b1118; border-right: 1px solid #1b2631; }
+.CodeMirror-linenumber { color: #4e6072; padding: 0 7px 0 5px; }
+.CodeMirror-cursor { border-left: 2px solid var(--accent); }
+.CodeMirror-selected { background: #16364a !important; }
+.CodeMirror-focused .CodeMirror-selected { background: #1b4a64 !important; }
+.CodeMirror-activeline-background { background: #0e1922; }
+.CodeMirror-matchingbracket { color: #9be7a8 !important; outline: 1px solid #4e7a58; }
+.CodeMirror-foldgutter { width: 12px; }
+.CodeMirror-foldmarker { color: var(--accent); background: #16232e; border-radius: 3px; padding: 0 3px; }
+.cm-active-source-line { background: #122330 !important; }
+.cm-s-lyra .cm-tag { color: #7ee0ff; }
+.cm-s-lyra .cm-attribute { color: #b7d98b; }
+.cm-s-lyra .cm-string { color: #ffd479; }
+.cm-s-lyra .cm-string-2 { color: #ffd479; }
+.cm-s-lyra .cm-comment { color: #5f7185; font-style: italic; }
+.cm-s-lyra .cm-keyword { color: #ff9aaa; }
+.cm-s-lyra .cm-number { color: #d4a5ff; }
+.cm-s-lyra .cm-property { color: #e5c07b; }
+.cm-s-lyra .cm-variable { color: #eaf1f9; }
+.cm-s-lyra .cm-variable-2 { color: #9ad4ff; }
+.cm-s-lyra .cm-def { color: #9be7a8; }
+.cm-s-lyra .cm-operator { color: #8d9db1; }
+.cm-s-lyra .cm-atom { color: #d4a5ff; }
+.cm-s-lyra .cm-meta { color: #8d9db1; }
+.cm-s-lyra .cm-qualifier { color: #7ee0ff; }
+.cm-s-lyra .cm-builtin { color: #ffb86c; }
+.cm-s-lyra .cm-bracket { color: #c7d6e5; }
+.cm-s-lyra .cm-error { color: #ff8fa3; background: #3a1c24; }
+
+/* Autocomplete popup */
+.CodeMirror-hints { background: #131c26; border: 1px solid #345066; border-radius: 7px; box-shadow: 0 10px 28px rgba(0,0,0,.45); font: 12px Consolas, "Microsoft YaHei", monospace; z-index: 50; }
+.CodeMirror-hint { color: #c8d7e6; padding: 3px 8px; }
+li.CodeMirror-hint-active { background: #1d4d66; color: #ffffff; }
+
+/* Dynamic Dev Tool controls */
+#styleControls .inspector-group { border-top: 1px solid var(--line); padding: 10px 0 8px; }
+#styleControls h3 { color: #9fb3c7; font-size: 10.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 8px; }
+.style-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: #8d9db1; font: 11px Consolas, "Microsoft YaHei", sans-serif; }
+.style-field > span { flex: 0 0 124px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.style-field input, .style-field select {
+  width: 158px; min-width: 0; background: #0b1118; color: #eaf1f9; border: 1px solid var(--line);
+  border-radius: 5px; padding: 4px 6px; outline: none; font: 11px Consolas, "Microsoft YaHei", sans-serif;
+}
+.style-field input:focus, .style-field select:focus { border-color: var(--accent); }
+.style-field input[type=color] { width: 42px; height: 23px; padding: 0; border-radius: 4px; background: transparent; cursor: pointer; }
+.style-field input[type=range] { width: 158px; accent-color: var(--accent); }
+.custom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.custom-row input { width: 100%; background: #0b1118; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; font: 11px Consolas, "Microsoft YaHei", sans-serif; outline: none; }
+.custom-row input:focus { border-color: var(--accent); }
+.custom-row button { grid-column: 1 / -1; }
+.action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.action-row button { width: 100%; }
+select:disabled, input:disabled, button:disabled { opacity: .45; cursor: default; }

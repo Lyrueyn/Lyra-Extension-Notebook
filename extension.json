@@ -1,9 +1,9 @@
 ﻿{
   "id": "notebook",
   "name": "笔记本",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "entry": "index.html",
-  "description": "HTML 笔记本：一个 .lyrnb 文件包含多篇 HTML 笔记，三栏源码/预览/Dev Tool 编辑器。",
+  "description": "HTML 笔记本：CodeMirror 源码高亮/补全 + 实时预览 + 完整 Dev Tool 调参。",
   "kind": "notebook",
   "fileTypes": [".lyrnb"],
   "host": {

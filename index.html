@@ -4,6 +4,9 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>HTML 笔记 · 璃鸢镜</title>
+  <link rel="stylesheet" href="vendor/codemirror/codemirror.min.css"/>
+  <link rel="stylesheet" href="vendor/codemirror/addon/hint/show-hint.min.css"/>
+  <link rel="stylesheet" href="vendor/codemirror/addon/fold/foldgutter.min.css"/>
   <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
@@ -27,21 +30,20 @@
   <main class="workspace">
     <section class="pane source-pane">
       <div class="pane-head">
-        <span>HTML 源码</span>
-        <span id="sourcePos" class="pane-meta">行 1</span>
+        <span>HTML</span>
+        <span id="sourcePos" class="pane-meta">Ln 1</span>
       </div>
       <div class="code-wrap">
-        <div id="lineNumbers" class="line-numbers">1</div>
-        <textarea id="sourceEditor" class="source-editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+        <div id="sourceEditor" class="source-editor"></div>
       </div>
     </section>
 
     <section class="pane preview-pane">
       <div class="pane-head">
-        <span>实时预览</span>
+        <span>Preview</span>
         <div class="preview-actions">
-          <button id="reloadBtn" class="ghost" type="button">刷新</button>
-          <button id="inspectBtn" class="ghost" type="button" title="开启后点击预览元素，左侧源码和右侧样式会同步">检查元素</button>
+          <button id="reloadBtn" class="ghost" type="button">Reload</button>
+          <button id="inspectBtn" class="ghost" type="button" title="Inspect: click an element in the preview">Inspect</button>
         </div>
       </div>
       <div class="preview-wrap">
@@ -51,58 +53,40 @@
 
     <aside class="pane inspector-pane">
       <div class="pane-head">
-        <span>Dev Tool / 调参</span>
-        <span id="inspectorLine" class="pane-meta">未选择元素</span>
+        <span>Dev Tool</span>
+        <span id="inspectorLine" class="pane-meta">No selection</span>
       </div>
       <div class="inspector-scroll">
-        <div id="selInfo" class="selection-info">点击预览中的元素进行检查；开启「检查元素」后才会拦截点击。</div>
+        <div id="selInfo" class="selection-info">Click an element in the preview. Turn on <b>Inspect</b> to intercept clicks.</div>
 
         <section class="inspector-group">
-          <h3>子元素对齐</h3>
+          <h3>Flex quick actions</h3>
           <div class="flex-presets">
-            <button data-flex="row-start" type="button">横排 · 左</button>
-            <button data-flex="row-center" type="button">横排 · 中</button>
-            <button data-flex="row-between" type="button">横排 · 两端</button>
-            <button data-flex="column-start" type="button">竖排 · 上</button>
-            <button data-flex="column-center" type="button">竖排 · 中</button>
-            <button data-flex="column-between" type="button">竖排 · 两端</button>
+            <button data-flex="row-start" type="button">row / start</button>
+            <button data-flex="row-center" type="button">row / center</button>
+            <button data-flex="row-between" type="button">row / between</button>
+            <button data-flex="column-start" type="button">column / start</button>
+            <button data-flex="column-center" type="button">column / center</button>
+            <button data-flex="column-between" type="button">column / between</button>
           </div>
-          <div class="control-grid">
-            <label>display<select data-style="display"><option>block</option><option>flex</option><option>grid</option><option>inline-block</option><option>inline</option><option>none</option></select></label>
-            <label>flex 方向<select data-style="flexDirection"><option>row</option><option>column</option><option>row-reverse</option><option>column-reverse</option></select></label>
-            <label>主轴对齐<select data-style="justifyContent"><option>flex-start</option><option>center</option><option>flex-end</option><option>space-between</option><option>space-around</option><option>space-evenly</option></select></label>
-            <label>交叉轴对齐<select data-style="alignItems"><option>stretch</option><option>flex-start</option><option>center</option><option>flex-end</option></select></label>
-            <label>gap<input data-style="gap" type="range" min="0" max="80" step="1"/></label>
-            <label>text-align<select data-style="textAlign"><option>left</option><option>center</option><option>right</option><option>justify</option></select></label>
+        </section>
+
+        <div id="styleControls"></div>
+
+        <section class="inspector-group">
+          <h3>Custom property</h3>
+          <div class="custom-row">
+            <input id="customStyleName" type="text" placeholder="property (e.g. grid-template-columns)" spellcheck="false"/>
+            <input id="customStyleValue" type="text" placeholder="value (e.g. 1fr 1fr)" spellcheck="false"/>
+            <button id="applyCustomStyleBtn" class="ghost" type="button">Apply</button>
           </div>
         </section>
 
         <section class="inspector-group">
-          <h3>尺寸与间距</h3>
-          <div class="control-grid">
-            <label>width<input data-style="width" type="text" placeholder="auto"/></label>
-            <label>height<input data-style="height" type="text" placeholder="auto"/></label>
-            <label>padding<input data-style="padding" type="range" min="0" max="96" step="1"/></label>
-            <label>margin<input data-style="margin" type="range" min="0" max="96" step="1"/></label>
-            <label>圆角<input data-style="borderRadius" type="range" min="0" max="80" step="1"/></label>
-          </div>
-        </section>
-
-        <section class="inspector-group">
-          <h3>文字与颜色</h3>
-          <div class="control-grid">
-            <label>字号<input data-style="fontSize" type="range" min="8" max="72" step="1"/></label>
-            <label>字重<select data-style="fontWeight"><option>300</option><option>400</option><option>500</option><option>600</option><option>700</option><option>800</option></select></label>
-            <label>文字颜色<input data-style="color" type="color" value="#1f2937"/></label>
-            <label>背景颜色<input data-style="backgroundColor" type="color" value="#ffffff"/></label>
-          </div>
-        </section>
-
-        <section class="inspector-group">
-          <h3>源码位置</h3>
-          <div class="control-grid">
-            <button id="jumpSourceBtn" class="ghost" type="button">跳转到源码行</button>
-            <button id="clearStyleBtn" class="ghost danger-text" type="button">清除内联样式</button>
+          <h3>Actions</h3>
+          <div class="action-row">
+            <button id="jumpSourceBtn" class="ghost" type="button">Jump to source</button>
+            <button id="clearStyleBtn" class="ghost danger-text" type="button">Clear inline style</button>
           </div>
         </section>
       </div>
@@ -119,6 +103,22 @@
 </div>
 
 <script src="vendor/jszip.min.js"></script>
+<script src="vendor/codemirror/codemirror.min.js"></script>
+<script src="vendor/codemirror/mode/xml/xml.min.js"></script>
+<script src="vendor/codemirror/mode/css/css.min.js"></script>
+<script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
+<script src="vendor/codemirror/mode/htmlmixed/htmlmixed.min.js"></script>
+<script src="vendor/codemirror/addon/hint/show-hint.min.js"></script>
+<script src="vendor/codemirror/addon/hint/xml-hint.min.js"></script>
+<script src="vendor/codemirror/addon/hint/html-hint.min.js"></script>
+<script src="vendor/codemirror/addon/hint/css-hint.min.js"></script>
+<script src="vendor/codemirror/addon/hint/javascript-hint.min.js"></script>
+<script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
+<script src="vendor/codemirror/addon/edit/closebrackets.min.js"></script>
+<script src="vendor/codemirror/addon/edit/closetag.min.js"></script>
+<script src="vendor/codemirror/addon/fold/foldcode.min.js"></script>
+<script src="vendor/codemirror/addon/fold/foldgutter.min.js"></script>
+<script src="vendor/codemirror/addon/selection/active-line.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

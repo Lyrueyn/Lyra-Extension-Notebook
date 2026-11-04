@@ -25,6 +25,9 @@
     hostSeq: 0,
     pending: new Map(),
     syncingControls: false,
+    mirror: null,
+    suppressMirror: false,
+    highlightedLine: 0,
   };
 
   // ---------- 宿主桥接 ----------
@@ -81,6 +84,255 @@
   }
   function assetDataUrl(asset) {
     return asset ? "data:" + (asset.mime || "application/octet-stream") + ";base64," + asset.base64 : "";
+  }
+
+  // ---------- Dev Tool 样式字段 ----------
+  const STYLE_GROUPS = [
+    {
+      title: "Layout",
+      fields: [
+        { p: "display", t: "select", o: ["block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "contents", "none"] },
+        { p: "position", t: "select", o: ["static", "relative", "absolute", "fixed", "sticky"] },
+        { p: "top", t: "text", ph: "auto" },
+        { p: "right", t: "text", ph: "auto" },
+        { p: "bottom", t: "text", ph: "auto" },
+        { p: "left", t: "text", ph: "auto" },
+        { p: "zIndex", t: "text", ph: "auto" },
+        { p: "float", t: "select", o: ["none", "left", "right"] },
+        { p: "clear", t: "select", o: ["none", "both", "left", "right"] },
+        { p: "boxSizing", t: "select", o: ["content-box", "border-box"] },
+        { p: "overflow", t: "select", o: ["visible", "hidden", "scroll", "auto", "clip"] },
+        { p: "overflowX", t: "select", o: ["visible", "hidden", "scroll", "auto", "clip"] },
+        { p: "overflowY", t: "select", o: ["visible", "hidden", "scroll", "auto", "clip"] },
+        { p: "visibility", t: "select", o: ["visible", "hidden", "collapse"] },
+      ],
+    },
+    {
+      title: "Flex / Grid",
+      fields: [
+        { p: "flexDirection", t: "select", o: ["row", "row-reverse", "column", "column-reverse"] },
+        { p: "flexWrap", t: "select", o: ["nowrap", "wrap", "wrap-reverse"] },
+        { p: "justifyContent", t: "select", o: ["flex-start", "flex-end", "center", "space-between", "space-around", "space-evenly", "start", "end", "normal"] },
+        { p: "alignItems", t: "select", o: ["stretch", "flex-start", "flex-end", "center", "baseline", "start", "end"] },
+        { p: "alignContent", t: "select", o: ["stretch", "flex-start", "flex-end", "center", "space-between", "space-around", "start", "end"] },
+        { p: "alignSelf", t: "select", o: ["auto", "stretch", "flex-start", "flex-end", "center", "baseline", "start", "end"] },
+        { p: "gap", t: "text", ph: "0px" },
+        { p: "rowGap", t: "text", ph: "0px" },
+        { p: "columnGap", t: "text", ph: "0px" },
+        { p: "flexGrow", t: "text", ph: "0" },
+        { p: "flexShrink", t: "text", ph: "1" },
+        { p: "flexBasis", t: "text", ph: "auto" },
+        { p: "order", t: "text", ph: "0" },
+        { p: "gridTemplateColumns", t: "text", ph: "1fr 1fr" },
+        { p: "gridTemplateRows", t: "text", ph: "auto" },
+        { p: "gridAutoFlow", t: "select", o: ["row", "column", "dense", "row dense", "column dense"] },
+        { p: "gridColumn", t: "text", ph: "auto" },
+        { p: "gridRow", t: "text", ph: "auto" },
+      ],
+    },
+    {
+      title: "Size",
+      fields: [
+        { p: "width", t: "text", ph: "auto" },
+        { p: "minWidth", t: "text", ph: "auto" },
+        { p: "maxWidth", t: "text", ph: "none" },
+        { p: "height", t: "text", ph: "auto" },
+        { p: "minHeight", t: "text", ph: "auto" },
+        { p: "maxHeight", t: "text", ph: "none" },
+        { p: "aspectRatio", t: "text", ph: "auto" },
+      ],
+    },
+    {
+      title: "Spacing",
+      fields: [
+        { p: "paddingTop", t: "text", ph: "0px" },
+        { p: "paddingRight", t: "text", ph: "0px" },
+        { p: "paddingBottom", t: "text", ph: "0px" },
+        { p: "paddingLeft", t: "text", ph: "0px" },
+        { p: "marginTop", t: "text", ph: "0px" },
+        { p: "marginRight", t: "text", ph: "0px" },
+        { p: "marginBottom", t: "text", ph: "0px" },
+        { p: "marginLeft", t: "text", ph: "0px" },
+      ],
+    },
+    {
+      title: "Typography",
+      fields: [
+        { p: "fontFamily", t: "text", ph: "inherit" },
+        { p: "fontSize", t: "text", ph: "16px" },
+        { p: "fontWeight", t: "select", o: ["100", "200", "300", "400", "500", "600", "700", "800", "900", "normal", "bold"] },
+        { p: "fontStyle", t: "select", o: ["normal", "italic", "oblique"] },
+        { p: "lineHeight", t: "text", ph: "normal" },
+        { p: "letterSpacing", t: "text", ph: "normal" },
+        { p: "wordSpacing", t: "text", ph: "normal" },
+        { p: "textAlign", t: "select", o: ["left", "center", "right", "justify", "start", "end"] },
+        { p: "textIndent", t: "text", ph: "0px" },
+        { p: "textTransform", t: "select", o: ["none", "uppercase", "lowercase", "capitalize"] },
+        { p: "textDecoration", t: "select", o: ["none", "underline", "overline", "line-through"] },
+        { p: "whiteSpace", t: "select", o: ["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"] },
+        { p: "wordBreak", t: "select", o: ["normal", "break-all", "keep-all", "break-word"] },
+        { p: "overflowWrap", t: "select", o: ["normal", "break-word", "anywhere"] },
+        { p: "color", t: "color" },
+      ],
+    },
+    {
+      title: "Background / Border",
+      fields: [
+        { p: "backgroundColor", t: "color" },
+        { p: "backgroundImage", t: "text", ph: "none" },
+        { p: "backgroundSize", t: "text", ph: "auto" },
+        { p: "backgroundPosition", t: "text", ph: "0% 0%" },
+        { p: "backgroundRepeat", t: "select", o: ["repeat", "no-repeat", "repeat-x", "repeat-y", "space", "round"] },
+        { p: "borderWidth", t: "text", ph: "0px" },
+        { p: "borderStyle", t: "select", o: ["none", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset"] },
+        { p: "borderColor", t: "color" },
+        { p: "borderRadius", t: "text", ph: "0px" },
+        { p: "outline", t: "text", ph: "none" },
+        { p: "boxShadow", t: "text", ph: "none" },
+      ],
+    },
+    {
+      title: "Effects / Misc",
+      fields: [
+        { p: "opacity", t: "text", ph: "1" },
+        { p: "transform", t: "text", ph: "none" },
+        { p: "transformOrigin", t: "text", ph: "center" },
+        { p: "transition", t: "text", ph: "none" },
+        { p: "filter", t: "text", ph: "none" },
+        { p: "backdropFilter", t: "text", ph: "none" },
+        { p: "cursor", t: "select", o: ["auto", "default", "pointer", "text", "move", "grab", "not-allowed"] },
+        { p: "listStyleType", t: "select", o: ["disc", "circle", "square", "decimal", "lower-alpha", "upper-alpha", "none"] },
+        { p: "tableLayout", t: "select", o: ["auto", "fixed"] },
+        { p: "borderCollapse", t: "select", o: ["separate", "collapse"] },
+        { p: "verticalAlign", t: "select", o: ["baseline", "top", "middle", "bottom", "text-top", "text-bottom"] },
+      ],
+    },
+  ];
+
+  function renderStyleControls() {
+    const hostEl = $("styleControls");
+    hostEl.innerHTML = "";
+    for (const group of STYLE_GROUPS) {
+      const section = document.createElement("section");
+      section.className = "inspector-group";
+      const title = document.createElement("h3");
+      title.textContent = group.title;
+      section.appendChild(title);
+      for (const field of group.fields) {
+        const row = document.createElement("div");
+        row.className = "style-field";
+        const label = document.createElement("span");
+        label.textContent = field.p.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+        row.appendChild(label);
+        let input;
+        if (field.t === "select") {
+          input = document.createElement("select");
+          for (const opt of field.o) {
+            const o = document.createElement("option");
+            o.value = opt;
+            o.textContent = opt;
+            input.appendChild(o);
+          }
+        } else if (field.t === "color") {
+          input = document.createElement("input");
+          input.type = "color";
+          input.value = "#ffffff";
+        } else {
+          input = document.createElement("input");
+          input.type = "text";
+          input.placeholder = field.ph || "";
+          input.spellcheck = false;
+        }
+        input.dataset.style = field.p;
+        input.disabled = true;
+        row.appendChild(input);
+        section.appendChild(row);
+      }
+      hostEl.appendChild(section);
+    }
+  }
+
+  // ---------- CodeMirror 源码编辑器 ----------
+  function getSource() {
+    return state.mirror ? state.mirror.getValue() : "";
+  }
+  function setSourceValue(text, resetHistory) {
+    if (!state.mirror) return;
+    state.suppressMirror = true;
+    try {
+      state.mirror.setValue(text || "");
+      if (resetHistory) {
+        state.mirror.clearHistory();
+        state.mirror.setCursor({ line: 0, ch: 0 });
+      }
+    } finally {
+      state.suppressMirror = false;
+    }
+  }
+  function showCmHint(cm) {
+    if (!cm || !cm.showHint) return;
+    const pos = cm.getCursor();
+    const mode = cm.getModeAt(pos);
+    const helper = mode && mode.helperType ? mode.helperType : (mode && mode.name) || "";
+    let hint = null;
+    if (helper === "html" || helper === "xml" || /html|xml/i.test(helper)) {
+      hint = CodeMirror.hint.html || CodeMirror.hint.xml;
+    } else if (helper === "css" || /css/i.test(helper)) {
+      hint = CodeMirror.hint.css;
+    } else if (helper === "javascript" || /javascript/i.test(helper)) {
+      hint = CodeMirror.hint.javascript;
+    }
+    if (!hint) hint = CodeMirror.hint.html || CodeMirror.hint.xml;
+    cm.showHint({ hint: hint, completeSingle: false });
+  }
+  function initSourceEditor() {
+    if (state.mirror || !window.CodeMirror) return;
+    const cm = CodeMirror($("sourceEditor"), {
+      value: "",
+      mode: "htmlmixed",
+      theme: "lyra",
+      lineNumbers: true,
+      lineWrapping: false,
+      indentUnit: 2,
+      tabSize: 2,
+      indentWithTabs: false,
+      matchBrackets: true,
+      autoCloseBrackets: true,
+      autoCloseTags: true,
+      styleActiveLine: true,
+      foldGutter: true,
+      gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+      hintOptions: { completeSingle: false, closeOnUnfocus: true },
+      extraKeys: {
+        "Ctrl-Space": (editor) => showCmHint(editor),
+        "Shift-Ctrl-Space": (editor) => showCmHint(editor),
+      },
+    });
+    state.mirror = cm;
+    cm.on("change", () => {
+      if (state.suppressMirror) return;
+      const note = currentNote();
+      if (note) note.html = cm.getValue();
+      clearSelection();
+      markDirty();
+      schedulePreview(false);
+      scheduleSave();
+    });
+    cm.on("inputRead", (editor, change) => {
+      if (state.suppressMirror) return;
+      const text = change.text.join("");
+      // 输入 <、属性空格、=、引号时给出基础补全提示；Ctrl+Space 随时可手动打开。
+      if (text === "<" || text === " " || text === "=" || text === '"' || text === "'") {
+        clearTimeout(editor._lyraHintTimer);
+        editor._lyraHintTimer = setTimeout(() => {
+          if (!editor.state.completionActive) showCmHint(editor);
+        }, 120);
+      }
+    });
+    cm.on("cursorActivity", () => {
+      const line = cm.getCursor().line + 1;
+      $("sourcePos").textContent = "Ln " + line;
+    });
   }
 
   // ---------- 默认内容 ----------
@@ -289,7 +541,7 @@
     }
     return parts.join(" > ");
   }
-  var COMPUTED = ["display","flexDirection","justifyContent","alignItems","gap","padding","margin","width","height","fontSize","fontWeight","lineHeight","color","backgroundColor","borderRadius","textAlign","position","fontFamily"];
+  var COMPUTED = ["display","position","top","right","bottom","left","zIndex","float","clear","boxSizing","overflow","overflowX","overflowY","visibility","flexDirection","flexWrap","justifyContent","alignItems","alignContent","alignSelf","gap","rowGap","columnGap","flexGrow","flexShrink","flexBasis","order","gridTemplateColumns","gridTemplateRows","gridAutoFlow","gridColumn","gridRow","width","minWidth","maxWidth","height","minHeight","maxHeight","aspectRatio","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing","wordSpacing","textAlign","textIndent","textTransform","textDecoration","whiteSpace","wordBreak","overflowWrap","color","backgroundColor","backgroundImage","backgroundSize","backgroundPosition","backgroundRepeat","borderWidth","borderStyle","borderColor","borderRadius","outline","boxShadow","opacity","transform","transformOrigin","transition","filter","backdropFilter","cursor","listStyleType","tableLayout","borderCollapse","verticalAlign"];
   function pick(el) {
     var cs = getComputedStyle(el);
     var computed = {};
@@ -391,7 +643,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   }
   function renderPreview(reselect = false) {
     try {
-      const source = $("sourceEditor").value;
+      const source = getSource();
       const annotated = annotateHtml(source);
       state.sourceMap = annotated.map;
       let html = annotated.html;
@@ -440,14 +692,17 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     document.querySelectorAll("[data-style]").forEach((el) => { el.disabled = !enabled; });
     $("jumpSourceBtn").disabled = !enabled;
     $("clearStyleBtn").disabled = !enabled;
+    $("customStyleName").disabled = !enabled;
+    $("customStyleValue").disabled = !enabled;
+    $("applyCustomStyleBtn").disabled = !enabled;
   }
   function clearSelection() {
     state.selectedSrcId = null;
     state.selectedSelector = "";
     state.selectedLine = 0;
-    $("inspectorLine").textContent = "未选择元素";
-    $("selInfo").textContent = "点击预览中的元素进行检查；开启「检查元素」后才会拦截点击。";
-    $("sourcePos").textContent = "行 1";
+    $("inspectorLine").textContent = "No selection";
+    $("selInfo").textContent = "Click an element in the preview. Turn on Inspect to intercept clicks.";
+    $("sourcePos").textContent = "Ln 1";
     setInspectorEnabled(false);
   }
   function infoHtml(data) {
@@ -461,9 +716,9 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     state.selectedSrcId = data.srcId;
     state.selectedSelector = data.selector || "";
     state.selectedLine = entry.line;
-    $("inspectorLine").textContent = "第 " + entry.line + " 行";
+    $("inspectorLine").textContent = "Ln " + entry.line;
     $("selInfo").innerHTML = infoHtml(data);
-    $("sourcePos").textContent = "行 " + entry.line;
+    $("sourcePos").textContent = "Ln " + entry.line;
     syncInspector(data.computed || {});
     setInspectorEnabled(true);
     highlightLine(entry.line, !isReselect);
@@ -495,7 +750,13 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
           el.value = toHexColor(value);
         } else if (el.tagName === "SELECT") {
           const has = Array.from(el.options).some((o) => o.value === value || o.text === value);
-          if (has) el.value = value;
+          if (!has) {
+            const opt = document.createElement("option");
+            opt.value = value;
+            opt.textContent = value;
+            el.appendChild(opt);
+          }
+          el.value = value;
         } else {
           el.value = value;
         }
@@ -534,8 +795,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     if (!state.selectedSrcId) return;
     const entry = state.sourceMap[state.selectedSrcId];
     if (!entry) return;
-    const editor = $("sourceEditor");
-    const source = editor.value;
+    const source = getSource();
     let tag = source.slice(entry.start, entry.end);
     const styleMatch = tag.match(/\sstyle\s*=\s*(["'])([\s\S]*?)\1/i);
     const decls = parseStyleText(styleMatch ? styleMatch[2] : "");
@@ -546,11 +806,10 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     }
     tag = setTagStyle(tag, decls);
     const next = source.slice(0, entry.start) + tag + source.slice(entry.end);
-    editor.value = next;
+    setSourceValue(next, false);
     const note = state.notes.get(state.currentId);
     if (note) note.html = next;
     state.sourceMap = annotateHtml(next).map;
-    updateLineNumbers();
     markDirty();
     schedulePreview(true);
     scheduleSave();
@@ -559,58 +818,39 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     if (!state.selectedSrcId) return;
     const entry = state.sourceMap[state.selectedSrcId];
     if (!entry) return;
-    const editor = $("sourceEditor");
-    const source = editor.value;
+    const source = getSource();
     const tag = source.slice(entry.start, entry.end);
     const stripped = tag.replace(/\sstyle\s*=\s*(["'])[\s\S]*?\1/i, "");
     const next = source.slice(0, entry.start) + stripped + source.slice(entry.end);
-    editor.value = next;
+    setSourceValue(next, false);
     const note = state.notes.get(state.currentId);
     if (note) note.html = next;
     state.sourceMap = annotateHtml(next).map;
-    updateLineNumbers();
     markDirty();
     schedulePreview(true);
     scheduleSave();
   }
 
-  // ---------- 源码行号 ----------
+  // ---------- 源码位置高亮 ----------
   function updateLineNumbers() {
-    const editor = $("sourceEditor");
-    const count = (editor.value.match(/\n/g) || []).length + 1;
-    const box = $("lineNumbers");
-    const frag = document.createDocumentFragment();
-    for (let i = 1; i <= count; i++) {
-      const d = document.createElement("div");
-      d.className = "line-number";
-      d.dataset.line = String(i);
-      d.textContent = String(i);
-      frag.appendChild(d);
-    }
-    box.innerHTML = "";
-    box.appendChild(frag);
-    box.scrollTop = editor.scrollTop;
+    // CodeMirror 自带行号；保留空函数兼容旧调用点。
   }
   function highlightLine(line, focus) {
-    updateLineNumbers();
-    const editor = $("sourceEditor");
-    const lines = editor.value.split("\n");
-    let start = 0;
-    for (let i = 0; i < Math.min(line - 1, lines.length); i++) start += lines[i].length + 1;
-    const end = Math.min(editor.value.length, start + (lines[line - 1] || "").length);
-    document.querySelectorAll(".line-number").forEach((el) => el.classList.toggle("active", el.dataset.line === String(line)));
-    if (focus) {
-      try {
-        editor.focus();
-        editor.setSelectionRange(start, end);
-        const style = window.getComputedStyle(editor);
-        const lh = parseFloat(style.lineHeight) || 19.2;
-        editor.scrollTop = Math.max(0, (line - 1) * lh - editor.clientHeight * 0.35);
-      } catch { }
-    }
-    $("sourcePos").textContent = "行 " + line;
-    const active = document.querySelector('.line-number.active');
-    if (active && !focus) active.scrollIntoView({ block: "nearest" });
+    const cm = state.mirror;
+    if (!cm) return;
+    try {
+      if (state.highlightedLine) {
+        cm.removeLineClass(state.highlightedLine - 1, "background", "cm-active-source-line");
+      }
+      state.highlightedLine = line;
+      cm.addLineClass(line - 1, "background", "cm-active-source-line");
+      cm.scrollIntoView({ line: line - 1, ch: 0 }, 100);
+      if (focus) {
+        cm.focus();
+        cm.setCursor({ line: line - 1, ch: 0 });
+      }
+    } catch { }
+    $("sourcePos").textContent = "Ln " + line;
   }
 
   // ---------- 源码编辑 / 热重载 ----------
@@ -627,7 +867,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   function syncCurrent() {
     const note = currentNote();
     if (!note) return;
-    note.html = $("sourceEditor").value;
+    note.html = getSource();
     note.meta.title = ($("noteTitle").value || "").trim() || "未命名笔记";
     note.meta.updatedAt = nowIso();
     state.manifest.notes = Array.from(state.notes.values()).map((n) => n.meta);
@@ -688,8 +928,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     const note = currentNote();
     if (!note) return;
     $("noteTitle").value = note.meta.title || "未命名笔记";
-    $("sourceEditor").value = note.html || "";
-    updateLineNumbers();
+    setSourceValue(note.html || "", true);
     clearSelection();
     renderPreview(false);
     refreshNoteSelect();
@@ -802,6 +1041,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
 
   // ---------- 事件 ----------
   function bind() {
+    renderStyleControls();
+    initSourceEditor();
     $("notebookTitle").addEventListener("input", () => {
       if (!state.manifest) return;
       state.manifest.title = $("notebookTitle").value.trim() || "未命名笔记本";
@@ -819,32 +1060,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("noteSelect").addEventListener("change", (e) => selectNote(e.target.value));
     $("newNoteBtn").addEventListener("click", createNote);
     $("deleteNoteBtn").addEventListener("click", deleteNote);
-    $("sourceEditor").addEventListener("input", () => {
-      const note = currentNote();
-      if (note) note.html = $("sourceEditor").value;
-      updateLineNumbers();
-      clearSelection();
-      markDirty();
-      schedulePreview(false);
-      scheduleSave();
-    });
-    $("sourceEditor").addEventListener("scroll", () => {
-      $("lineNumbers").scrollTop = $("sourceEditor").scrollTop;
-    });
-    $("sourceEditor").addEventListener("keydown", (e) => {
-      if (e.key === "Tab") {
-        e.preventDefault();
-        const el = $("sourceEditor");
-        const start = el.selectionStart, end = el.selectionEnd;
-        el.value = el.value.slice(0, start) + "  " + el.value.slice(end);
-        el.selectionStart = el.selectionEnd = start + 2;
-        el.dispatchEvent(new Event("input"));
-      }
-    });
-    $("sourceEditor").addEventListener("click", () => {
-      const line = $("sourceEditor").value.slice(0, $("sourceEditor").selectionStart).split("\n").length;
-      highlightLine(line, false);
-    });
     $("reloadBtn").addEventListener("click", () => renderPreview(false));
     $("inspectBtn").addEventListener("click", () => {
       state.inspectMode = !state.inspectMode;
@@ -856,14 +1071,18 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     });
     $("clearStyleBtn").addEventListener("click", clearInlineStyle);
     document.querySelectorAll("[data-style]").forEach((el) => {
-      const ev = (el.tagName === "SELECT" || el.type === "color" || el.type === "text") ? "change" : "input";
-      el.addEventListener(ev, () => {
+      el.addEventListener("change", () => {
         if (state.syncingControls || !state.selectedSrcId) return;
         const prop = el.dataset.style;
-        let value = el.value;
-        if (el.type === "range") value = value + "px";
-        applyStyleObject({ [prop]: value });
+        applyStyleObject({ [prop]: el.value });
       });
+    });
+    $("applyCustomStyleBtn").addEventListener("click", () => {
+      if (!state.selectedSrcId) return;
+      const name = $("customStyleName").value.trim();
+      const value = $("customStyleValue").value.trim();
+      if (!name) return;
+      applyStyleObject({ [name]: value });
     });
     document.querySelectorAll("[data-flex]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -873,14 +1092,13 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
           display: "flex",
           flexDirection: dir,
           justifyContent: align === "between" ? "space-between" : align === "center" ? "center" : "flex-start",
-          alignItems: dir === "row" ? "center" : "center",
+          alignItems: "center",
           gap: "12px",
         };
         applyStyleObject(obj);
       });
     });
     window.addEventListener("beforeunload", () => { try { saveNow(); } catch { } });
-    window.addEventListener("resize", () => { });
   }
 
   bind();
