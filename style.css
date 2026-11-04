@@ -244,3 +244,12 @@ select:disabled, input:disabled, button:disabled { opacity: .45; cursor: default
 .autocomplete-popup { position: fixed; z-index: 200; max-height: 240px; overflow: auto; background: #111b25; border: 1px solid #345066; border-radius: 7px; box-shadow: 0 10px 28px rgba(0,0,0,.5); min-width: 180px; padding: 3px; }
 .autocomplete-item { padding: 4px 7px; border-radius: 4px; color: #c8d7e6; font: 11px Consolas, "Microsoft YaHei", monospace; cursor: pointer; white-space: nowrap; }
 .autocomplete-item:hover, .autocomplete-item.active { background: #1d4d66; color: #fff; }
+
+/* Property panel sizing */
+.workspace { grid-template-columns: minmax(300px, 30%) minmax(340px, 1fr) 430px; }
+.inspector-scroll { padding: 10px 14px 30px; }
+.css-prop-search { padding: 8px 9px; font-size: 12px; }
+.inline-style-rows { max-height: 340px; overflow: auto; padding-right: 2px; }
+.inline-style-row { grid-template-columns: 132px minmax(0, 1fr) 26px; }
+.inline-style-row input { padding: 5px 6px; font-size: 11px; }
+.inline-style-row .prop { font-size: 10.5px; }

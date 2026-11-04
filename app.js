@@ -314,9 +314,15 @@
     const style = document.createElement("div").style;
     const set = new Set();
     for (const key in style) {
-      if (/^[a-zA-Z]/.test(key)) set.add(cssProp(key));
+      if (!/^[a-zA-Z]/.test(key)) continue;
+      const prop = cssProp(key);
+      try {
+        if (!window.CSS || CSS.supports(prop, "inherit")) set.add(prop);
+      } catch { }
     }
-    ["float", "clear", "content", "cursor", "filter", "backdrop-filter", "appearance"].forEach((p) => set.add(p));
+    ["float", "clear", "content", "cursor", "filter", "backdrop-filter", "appearance"].forEach((p) => {
+      try { if (!window.CSS || CSS.supports(p, "inherit")) set.add(p); } catch { }
+    });
     cachedCssProperties = Array.from(set).sort();
     return cachedCssProperties;
   }
@@ -567,7 +573,7 @@
       mode: "htmlmixed",
       theme: "lyra",
       lineNumbers: true,
-      lineWrapping: false,
+      lineWrapping: true,
       indentUnit: 2,
       tabSize: 2,
       indentWithTabs: false,
@@ -629,17 +635,64 @@
     $("saveState").textContent = "未保存";
     $("saveState").className = "save-state saving";
   }
+  function splitCssDeclarations(text) {
+    const out = [];
+    let current = "", quote = "", depth = 0;
+    for (let i = 0; i < String(text).length; i++) {
+      const c = text[i];
+      if (quote) {
+        current += c;
+        if (c === quote) quote = "";
+        continue;
+      }
+      if (c === '"' || c === "'") { quote = c; current += c; continue; }
+      if (c === "(") { depth++; current += c; continue; }
+      if (c === ")") { depth = Math.max(0, depth - 1); current += c; continue; }
+      if (c === ";" && depth === 0) {
+        if (current.trim()) out.push(current.trim());
+        current = "";
+        continue;
+      }
+      current += c;
+    }
+    if (current.trim()) out.push(current.trim());
+    return out;
+  }
+  function formatStyleAttributes(html) {
+    return html.replace(/\bstyle="([^"]*)"/g, (match, css, offset) => {
+      const decls = splitCssDeclarations(css);
+      if (decls.length < 2) return match;
+      const lineStart = html.lastIndexOf("\n", offset) + 1;
+      const linePrefix = html.slice(lineStart, offset);
+      const indent = (linePrefix.match(/^[ \t]*/) || [""])[0];
+      return 'style="' + decls.join(";\n" + indent + "  ") + ';"';
+    });
+  }
+  function formatStyleTags(html) {
+    if (typeof window.css_beautify !== "function") return html;
+    return html.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (match, open, css, close) => {
+      try {
+        const formatted = window.css_beautify(css, { indent_size: 2, end_with_newline: false });
+        return open + "\n" + formatted + "\n" + close;
+      } catch { return match; }
+    });
+  }
   function formatSource() {
     if (typeof window.html_beautify !== "function") return;
     const source = getSource();
     if (!source.trim()) return;
-    const formatted = window.html_beautify(source, {
+    let formatted = window.html_beautify(source, {
       indent_size: 2,
       preserve_newlines: true,
       max_preserve_newlines: 2,
       wrap_line_length: 0,
+      wrap_attributes: "auto",
+      wrap_attributes_indent_size: 2,
+      wrap_attributes_min_attrs: 2,
       end_with_newline: true,
     });
+    formatted = formatStyleAttributes(formatted);
+    formatted = formatStyleTags(formatted);
     setSourceValue(formatted, false);
     const note = currentNote();
     if (note) note.html = formatted;
@@ -1080,9 +1133,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     document.querySelectorAll("[data-style]").forEach((el) => { el.disabled = !enabled; });
     $("jumpSourceBtn").disabled = !enabled;
     $("clearStyleBtn").disabled = !enabled;
-    $("customStyleName").disabled = !enabled;
-    $("customStyleValue").disabled = !enabled;
-    $("applyCustomStyleBtn").disabled = !enabled;
     $("attrId").disabled = !enabled;
     $("attrClass").disabled = !enabled;
     $("applyAttrsBtn").disabled = !enabled;
@@ -1672,6 +1722,12 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     const note = state.notes.get(state.currentId);
     if (note) note.html = next;
     state.sourceMap = annotateHtml(next).map;
+    const newEntry = state.sourceMap[state.selectedSrcId];
+    if (newEntry) {
+      const raw = next.slice(newEntry.start, newEntry.end);
+      const sm = raw.match(/\sstyle\s*=\s*(["'])([\s\S]*?)\1/i);
+      renderInlineStyles(sm ? sm[2] : "");
+    }
     markDirty();
     schedulePreview(true);
     scheduleSave();
@@ -1688,6 +1744,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     const note = state.notes.get(state.currentId);
     if (note) note.html = next;
     state.sourceMap = annotateHtml(next).map;
+    renderInlineStyles("");
     markDirty();
     schedulePreview(true);
     scheduleSave();
@@ -1904,7 +1961,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
 
   // ---------- 事件 ----------
   function bind() {
-    renderStyleControls();
     initSourceEditor();
     $("formatBtn").addEventListener("click", formatSource);
     $("imageBtn").addEventListener("click", () => $("imageInput").click());
@@ -1980,13 +2036,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
         const prop = el.dataset.style;
         applyStyleObject({ [prop]: el.value });
       });
-    });
-    $("applyCustomStyleBtn").addEventListener("click", () => {
-      if (!state.selectedSrcId) return;
-      const name = $("customStyleName").value.trim();
-      const value = $("customStyleValue").value.trim();
-      if (!name) return;
-      applyStyleObject({ [name]: value });
     });
     document.querySelectorAll("[data-flex]").forEach((btn) => {
       btn.addEventListener("click", () => {
