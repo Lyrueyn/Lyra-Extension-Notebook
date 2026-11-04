@@ -35,3 +35,9 @@
 - 预览在沙箱 iframe 中运行，检查器只在预览 DOM 临时加标记，不会写进 `.lyrnb`。
 - 旧版结构化块 `.lyrnb` 会在打开时自动转换成 HTML，保存后成为 v2 格式。
 - 详细格式见 `FORMAT.md`。
+
+## License
+
+GNU General Public License v3.0. See [LICENSE](LICENSE).
+
+Third-party components retain their own licenses (CodeMirror: MIT, JSZip: MIT/GPLv3, js-beautify: MIT).
