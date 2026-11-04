@@ -253,3 +253,6 @@ select:disabled, input:disabled, button:disabled { opacity: .45; cursor: default
 .inline-style-row { grid-template-columns: 132px minmax(0, 1fr) 26px; }
 .inline-style-row input { padding: 5px 6px; font-size: 11px; }
 .inline-style-row .prop { font-size: 10.5px; }
+
+.dom-edit-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 7px; }
+.dom-edit-actions button { padding: 4px 6px; font-size: 10px; }

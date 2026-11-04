@@ -1408,6 +1408,85 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     const source = getSource();
     applySourceEdit(source.slice(0, entry.start) + source.slice(entry.fullEnd));
   }
+  function findDomNodeInfo(id) {
+    if (!state.domTree) return null;
+    let found = null;
+    const walk = (node, parent, index) => {
+      if (found) return;
+      if (node.srcId === id) { found = { node: node, parent: parent, index: index }; return; }
+      const children = node.children || [];
+      for (let i = 0; i < children.length; i++) walk(children[i], node, i);
+    };
+    walk(state.domTree, null, 0);
+    return found;
+  }
+  function selectedElementSource() {
+    if (!state.selectedSrcId) { alert("Select an element first."); return null; }
+    const entry = state.sourceMap[state.selectedSrcId];
+    if (!entry || entry.fullEnd == null) { alert("Cannot determine source range for this element."); return null; }
+    if (["html", "head", "body"].includes(entry.tag)) { alert("Cannot modify structural tag <" + entry.tag + ">."); return null; }
+    return { entry: entry, source: getSource() };
+  }
+  function duplicateSelectedElement() {
+    const data = selectedElementSource();
+    if (!data) return;
+    const text = data.source.slice(data.entry.start, data.entry.fullEnd);
+    const lineStart = data.source.lastIndexOf("\n", data.entry.start) + 1;
+    const prefix = data.source.slice(lineStart, data.entry.start);
+    const indent = /^[ \t]*$/.test(prefix) ? prefix : "";
+    const separator = indent ? "\n" + indent : "";
+    applySourceEdit(data.source.slice(0, data.entry.fullEnd) + separator + text + data.source.slice(data.entry.fullEnd));
+  }
+  function moveSelectedElement(delta) {
+    const data = selectedElementSource();
+    if (!data) return;
+    const info = findDomNodeInfo(state.selectedSrcId);
+    if (!info || !info.parent) { alert("Cannot find the parent element; refresh the DOM tree."); return; }
+    const siblings = info.parent.children || [];
+    const target = siblings[info.index + delta];
+    if (!target) return;
+    const targetEntry = state.sourceMap[target.srcId];
+    if (!targetEntry || targetEntry.fullEnd == null) return;
+    const source = data.source;
+    const cur = data.entry;
+    const other = targetEntry;
+    let next;
+    if (delta < 0) {
+      next = source.slice(0, other.start) +
+        source.slice(cur.start, cur.fullEnd) +
+        source.slice(other.fullEnd, cur.start) +
+        source.slice(other.start, other.fullEnd) +
+        source.slice(cur.fullEnd);
+    } else {
+      next = source.slice(0, cur.start) +
+        source.slice(other.start, other.fullEnd) +
+        source.slice(cur.fullEnd, other.start) +
+        source.slice(cur.start, cur.fullEnd) +
+        source.slice(other.fullEnd);
+    }
+    applySourceEdit(next);
+  }
+  function copySelectedHtml() {
+    const data = selectedElementSource();
+    if (!data) return;
+    const text = data.source.slice(data.entry.start, data.entry.fullEnd);
+    const done = () => {
+      $("saveState").textContent = "Copied HTML";
+      setTimeout(() => { if (!$("saveState").textContent.startsWith("保存")) $("saveState").textContent = "Copied HTML"; }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch { }
+      ta.remove();
+      done();
+    }
+  }
+
   function renderAssets() {
     const host = $("assetList");
     if (!host) return;
@@ -2073,6 +2152,10 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("domSearch").addEventListener("input", () => renderDomTree());
     $("domRenameBtn").addEventListener("click", renameSelectedTag);
     $("domDeleteBtn").addEventListener("click", deleteSelectedElement);
+    $("domDuplicateBtn").addEventListener("click", duplicateSelectedElement);
+    $("domUpBtn").addEventListener("click", () => moveSelectedElement(-1));
+    $("domDownBtn").addEventListener("click", () => moveSelectedElement(1));
+    $("domCopyBtn").addEventListener("click", copySelectedHtml);
     document.querySelectorAll(".dev-tab").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });

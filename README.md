@@ -13,7 +13,7 @@
 - Dev Tool 四个标签：Style / CSS / DOM / Assets
 - CSS：管理 `<style data-lyra-devtool>` 规则，支持 :hover / :focus / :active / ::before / ::after
 - DOM Tree：树形浏览预览 DOM，支持搜索和折叠，点节点选中并跳到源码行
-- DOM 编辑：选中节点后可重命名标签、删除整个元素，操作直接改 HTML 源码
+- DOM 编辑：重命名标签、删除、复制元素、同级上移/下移、复制元素 HTML，操作直接改 HTML 源码
 - Assets：图片缩略图、Insert、Replace、Copy path、Delete，并显示引用次数
 - 引用检查：查找缺失资源和未使用资源
 - 预览支持 Responsive / 1440 / 1024 / 768 / 390 宽度
