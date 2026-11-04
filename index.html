@@ -46,6 +46,13 @@
       <div class="pane-head">
         <span>Preview</span>
         <div class="preview-actions">
+          <select id="viewportSelect" class="viewport-select" title="Preview viewport">
+            <option value="100%">Responsive</option>
+            <option value="1440px">1440</option>
+            <option value="1024px">1024</option>
+            <option value="768px">768</option>
+            <option value="390px">390</option>
+          </select>
           <button id="reloadBtn" class="ghost" type="button">Reload</button>
           <button id="inspectBtn" class="ghost" type="button" title="Inspect: click an element in the preview">Inspect</button>
         </div>
@@ -138,6 +145,8 @@
         </div>
         <div id="tabAssets" class="tab-content" hidden>
           <div class="tab-hint">Images stored inside this .lyrnb. Insert adds an &lt;img&gt; at the editor cursor.</div>
+          <div class="asset-toolbar"><button id="refreshAssetsBtn" class="ghost" type="button">Check references</button></div>
+          <div id="assetRefs" class="asset-refs"></div>
           <div id="assetList" class="asset-list"></div>
         </div>
       </div>
@@ -154,6 +163,7 @@
 </div>
 
 <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden/>
+<input id="replaceImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden/>
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/beautify/beautify-html.min.js"></script>
 <script src="vendor/codemirror/codemirror.min.js"></script>

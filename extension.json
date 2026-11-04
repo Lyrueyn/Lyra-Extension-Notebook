@@ -1,9 +1,9 @@
 ﻿{
   "id": "notebook",
   "name": "笔记本",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "entry": "index.html",
-  "description": "HTML 笔记本：CodeMirror 源码高亮/补全 + 实时预览 + 95 项 Dev Tool 调参 + CSS 规则/伪状态 + DOM Tree + Assets。",
+  "description": "HTML 笔记本：CodeMirror 源码高亮/补全 + 实时预览 + 95 项 Dev Tool 调参 + CSS 规则 + DOM Tree + 图片替换/引用检查 + 响应式预览。",
   "kind": "notebook",
   "fileTypes": [".lyrnb"],
   "host": {

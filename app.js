@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   "use strict";
 
   const FORMAT = "lyra-notebook";
@@ -31,6 +31,7 @@
     highlightedLine: 0,
     domTree: null,
     collapsedDom: new Set(),
+    pendingReplaceAssetId: null,
     activeTab: "style",
   };
 
@@ -928,10 +929,73 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     };
     walk(state.domTree, 0);
     markDomSelection();
-  }  function renderAssets() {
+  }  function assetUsage(path) {
+    let count = 0;
+    for (const note of state.notes.values()) {
+      const text = note.html || "";
+      let idx = 0;
+      while ((idx = text.indexOf(path, idx)) >= 0) { count++; idx += path.length; }
+    }
+    return count;
+  }
+  function collectAssetReferences() {
+    const refs = new Set();
+    for (const note of state.notes.values()) {
+      const text = note.html || "";
+      const matches = text.match(/assets\/[A-Za-z0-9._-]+/g) || [];
+      for (const m of matches) refs.add(m);
+    }
+    return refs;
+  }
+  function updateAssetRefs() {
+    const host = $("assetRefs");
+    if (!host) return;
+    const refs = collectAssetReferences();
+    const existing = new Set(Array.from(state.assets.values()).map((a) => a.path));
+    const missing = Array.from(refs).filter((r) => !existing.has(r));
+    const unused = Array.from(state.assets.values()).filter((a) => !refs.has(a.path));
+    if (!missing.length && !unused.length) {
+      host.innerHTML = '<span style="color:#77d69c">All asset references OK.</span>';
+      return;
+    }
+    const parts = [];
+    if (missing.length) parts.push('<span class="bad">Missing: ' + missing.map(escapeHtml).join(", ") + "</span>");
+    if (unused.length) parts.push('<span class="warn">Unused: ' + unused.map((a) => escapeHtml(a.name || a.path)).join(", ") + "</span>");
+    host.innerHTML = parts.join("<br>");
+  }
+  function checkAssetReferences() {
+    syncCurrent();
+    updateAssetRefs();
+  }
+  async function replaceAssetFile(file) {
+    const id = state.pendingReplaceAssetId;
+    state.pendingReplaceAssetId = null;
+    if (!id || !file || !/^image\//.test(file.type || "")) return;
+    const old = state.assets.get(id);
+    if (!old) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const fresh = await addAsset(bytes, file.name || old.name, file.type || old.mime);
+    if (fresh.id === old.id) return;
+    syncCurrent();
+    for (const note of state.notes.values()) {
+      note.html = (note.html || "").split(old.path).join(fresh.path);
+    }
+    const note = currentNote();
+    if (note) {
+      setSourceValue(note.html || "", false);
+      state.sourceMap = annotateHtml(note.html || "").map;
+    }
+    if (assetUsage(old.path) === 0) state.assets.delete(old.id);
+    markDirty();
+    renderAssets();
+    schedulePreview(false);
+    scheduleSave();
+  }
+  function renderAssets() {
     const host = $("assetList");
     if (!host) return;
     host.innerHTML = "";
+    updateAssetRefs();
     const assets = Array.from(state.assets.values());
     if (!assets.length) {
       const empty = document.createElement("div");
@@ -949,9 +1013,11 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       card.appendChild(img);
       const meta = document.createElement("div");
       meta.className = "asset-meta";
+      const uses = assetUsage(asset.path);
       meta.innerHTML = '<b>' + escapeHtml(asset.name || "image") + "</b><br>" +
         '<span class="asset-path">' + escapeHtml(asset.path) + "</span><br>" +
-        Math.max(1, Math.round((asset.size || 0) / 1024)) + " KB";
+        Math.max(1, Math.round((asset.size || 0) / 1024)) + " KB · " +
+        '<span class="asset-usage' + (uses ? "" : " unused") + '">' + (uses ? "Used " + uses + "×" : "Unused") + "</span>";
       card.appendChild(meta);
       const actions = document.createElement("div");
       actions.className = "asset-actions";
@@ -959,6 +1025,12 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       insert.type = "button"; insert.className = "ghost"; insert.textContent = "Insert";
       insert.addEventListener("click", () => {
         insertTextAtCursor('\n<img src="' + asset.path + '" alt="' + escapeAttr(asset.name || "image") + '">\n');
+      });
+      const replace = document.createElement("button");
+      replace.type = "button"; replace.className = "ghost"; replace.textContent = "Replace";
+      replace.addEventListener("click", () => {
+        state.pendingReplaceAssetId = asset.id;
+        $("replaceImageInput").click();
       });
       const copy = document.createElement("button");
       copy.type = "button"; copy.className = "ghost"; copy.textContent = "Copy path";
@@ -982,7 +1054,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
         scheduleSave();
         renderAssets();
       });
-      actions.appendChild(insert); actions.appendChild(copy); actions.appendChild(del);
+      actions.appendChild(insert); actions.appendChild(replace); actions.appendChild(copy); actions.appendChild(del);
       card.appendChild(actions);
       host.appendChild(card);
     }
@@ -1508,6 +1580,16 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       const file = e.target.files && e.target.files[0];
       e.target.value = "";
       if (file) await handleImageFile(file).catch(showError);
+    });
+    $("replaceImageInput").addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (file) await replaceAssetFile(file).catch(showError);
+    });
+    $("refreshAssetsBtn").addEventListener("click", checkAssetReferences);
+    $("viewportSelect").addEventListener("change", () => {
+      const value = $("viewportSelect").value || "100%";
+      $("previewFrame").style.width = value;
     });
     $("applyAttrsBtn").addEventListener("click", applyAttributes);
     $("applyCssRuleBtn").addEventListener("click", applyCssRule);
