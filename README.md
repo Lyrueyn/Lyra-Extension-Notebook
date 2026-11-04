@@ -10,7 +10,11 @@
 - CodeMirror 5 HTML/CSS/JS 语法高亮、行号、括号匹配、标签自动闭合
 - 基础补全：Ctrl+Space 手动触发，输入 `<`、空格、`=`、引号时自动提示
 - 源码修改后自动热重载预览
-- Dev Tool 三个标签：Style / DOM / Assets\n- DOM Tree：树形浏览预览 DOM，点节点选中并跳到源码行\n- Assets：列出 `.lyrnb` 内的图片资源，可预览、插入、复制路径、删除\n- 检查元素：点击预览元素，左侧跳到对应源码行
+- Dev Tool 四个标签：Style / CSS / DOM / Assets
+- CSS：管理 `<style data-lyra-devtool>` 规则，支持 :hover / :focus / :active / ::before / ::after
+- DOM Tree：树形浏览预览 DOM，支持搜索和折叠，点节点选中并跳到源码行
+- Assets：列出 `.lyrnb` 内的图片资源，可预览、插入、复制路径、删除
+- 检查元素：点击预览元素，左侧跳到对应源码行
 - 95 个 CSS 属性控件（Layout / Flex+Grid / Size / Spacing / Typography / Background+Border / Effects）+ 任意自定义属性，全部英文属性名
 - 右侧可调 flex/grid 布局、子元素对齐、间距、字体、颜色、圆角、变换、过渡、滤镜等，修改直接写回源码 inline style
 - 图片：Image 按钮选择本地图片，按 SHA-256 存入 `.lyrnb` 的 `assets/`，源码插入 `<img src="assets/...">`

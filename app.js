@@ -17,6 +17,7 @@
     selectedSrcId: null,
     selectedSelector: "",
     selectedLine: 0,
+    selectedData: null,
     inspectMode: false,
     dirty: false,
     saveTimer: 0,
@@ -29,6 +30,7 @@
     suppressMirror: false,
     highlightedLine: 0,
     domTree: null,
+    collapsedDom: new Set(),
     activeTab: "style",
   };
 
@@ -684,6 +686,8 @@
   }, true);
   function buildTree(el, depth) {
     if (!el || depth > 12) return null;
+    var tagName = el.tagName ? el.tagName.toLowerCase() : "";
+    if (tagName === "script" || tagName === "style") return null;
     var sid = el.getAttribute ? el.getAttribute("data-lyra-src") : "";
     if (!sid && el !== document.body) return null;
     var children = [];
@@ -788,6 +792,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
         }
       };
       frame.srcdoc = doc;
+      if (state.activeTab === "css") renderCssRules();
     } catch (e) {
       console.error(e);
     }
@@ -833,6 +838,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     state.selectedSrcId = null;
     state.selectedSelector = "";
     state.selectedLine = 0;
+    state.selectedData = null;
     $("inspectorLine").textContent = "No selection";
     $("selInfo").textContent = "Click an element in the preview. Turn on Inspect to intercept clicks.";
     $("sourcePos").textContent = "Ln 1";
@@ -850,6 +856,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       if (!state.domTree) postToPreview("getTree", {});
     } else if (name === "assets") {
       renderAssets();
+    } else if (name === "css") {
+      renderCssRules();
     }
   }
   function markDomSelection() {
@@ -863,11 +871,33 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       host.textContent = "Loading DOM…";
       return;
     }
+    const q = ($("domSearch").value || "").trim().toLowerCase();
+    const matches = (node) => {
+      if (!q) return true;
+      const own = [node.tag, node.id, node.className, node.text].join(" ").toLowerCase();
+      if (own.includes(q)) return true;
+      return (node.children || []).some(matches);
+    };
     const walk = (node, depth) => {
+      if (!matches(node)) return;
       const row = document.createElement("div");
       row.className = "dom-row";
-      row.dataset.srcId = node.srcId;
-      row.style.paddingLeft = (6 + depth * 12) + "px";
+      row.dataset.srcId = node.srcId || "";
+      row.style.paddingLeft = (4 + depth * 12) + "px";
+      const children = node.children || [];
+      const key = node.srcId || "__root";
+      const collapsed = !q && state.collapsedDom.has(key);
+      const toggle = document.createElement("span");
+      toggle.className = "dom-toggle" + (children.length ? "" : " leaf");
+      toggle.textContent = collapsed ? "▸" : "▾";
+      toggle.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!children.length) return;
+        if (state.collapsedDom.has(key)) state.collapsedDom.delete(key);
+        else state.collapsedDom.add(key);
+        renderDomTree();
+      });
+      row.appendChild(toggle);
       const tag = document.createElement("span");
       tag.className = "dom-tag";
       tag.textContent = "<" + node.tag + ">";
@@ -884,7 +914,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
         cls.textContent = "." + node.className.split(/\s+/).join(".");
         row.appendChild(cls);
       }
-      if (!node.children.length && node.text) {
+      if (!children.length && node.text) {
         const txt = document.createElement("span");
         txt.className = "dom-text";
         txt.textContent = node.text;
@@ -894,12 +924,11 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
         if (node.srcId) postToPreview("selectById", { srcId: node.srcId });
       });
       host.appendChild(row);
-      for (const child of node.children || []) walk(child, depth + 1);
+      if (!collapsed) for (const child of children) walk(child, depth + 1);
     };
     walk(state.domTree, 0);
     markDomSelection();
-  }
-  function renderAssets() {
+  }  function renderAssets() {
     const host = $("assetList");
     if (!host) return;
     host.innerHTML = "";
@@ -959,6 +988,151 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     }
   }
 
+  // ---------- 托管 CSS 规则 ----------
+  function findManagedStyle(source) {
+    const re = /<style\b[^>]*data-lyra-devtool[^>]*>([\s\S]*?)<\/style>/i;
+    const m = re.exec(source);
+    if (!m) return null;
+    return { start: m.index, end: m.index + m[0].length, content: m[1] };
+  }
+  function parseCssRules(text) {
+    const rules = [];
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const selector = m[1].trim();
+      const declarations = m[2].trim();
+      if (selector && !selector.startsWith("@")) rules.push({ selector, declarations });
+    }
+    return rules;
+  }
+  function tidyDeclarations(text) {
+    return String(text || "")
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => (s.endsWith(";") ? s : s + ";"))
+      .join("\n");
+  }
+  function serializeCssRules(rules) {
+    return rules.map((r) => r.selector + " {\n" + tidyDeclarations(r.declarations).replace(/^/gm, "  ") + "\n}").join("\n\n");
+  }
+  function defaultSelectorForData(data) {
+    if (!data) return "";
+    if (data.id) return "#" + data.id;
+    const cls = String(data.className || "").trim().split(/\s+/)[0];
+    if (cls) return "." + cls;
+    return data.tag || "";
+  }
+  function cssRuleKey(selector, stateSuffix) {
+    return selector + (stateSuffix || "");
+  }
+  function currentCssDraft() {
+    return {
+      selector: $("cssSelector").value.trim(),
+      state: $("cssState").value || "",
+      declarations: $("cssDeclarations").value,
+    };
+  }
+  function renderCssRules() {
+    const host = $("cssRuleList");
+    if (!host) return;
+    const block = findManagedStyle(getSource());
+    const rules = block ? parseCssRules(block.content) : [];
+    host.innerHTML = "";
+    if (!rules.length) {
+      const empty = document.createElement("div");
+      empty.className = "tab-hint";
+      empty.textContent = "No managed rules yet. Fill selector + declarations and click Apply rule.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const rule of rules) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "css-rule-item";
+      const head = document.createElement("span");
+      head.textContent = rule.selector;
+      item.appendChild(head);
+      item.appendChild(document.createTextNode(rule.declarations));
+      item.addEventListener("click", () => {
+        const m = rule.selector.match(/^(.*?)(?:::[a-z-]+|:[a-z-]+)$/i);
+        $("cssSelector").value = m ? m[1].trim() : rule.selector;
+        $("cssState").value = m ? m[2] : "";
+        $("cssDeclarations").value = rule.declarations;
+        document.querySelectorAll(".css-rule-item").forEach((el) => el.classList.remove("active"));
+        item.classList.add("active");
+      });
+      host.appendChild(item);
+    }
+  }
+  function loadCssRuleForDraft() {
+    const draft = currentCssDraft();
+    if (!draft.selector) return;
+    const block = findManagedStyle(getSource());
+    if (!block) return;
+    const key = cssRuleKey(draft.selector, draft.state);
+    const rule = parseCssRules(block.content).find((r) => r.selector === key);
+    if (rule) $("cssDeclarations").value = rule.declarations;
+  }
+  function writeManagedCss(rules) {
+    const source = getSource();
+    const block = findManagedStyle(source);
+    const css = serializeCssRules(rules);
+    let next;
+    if (block) {
+      if (!rules.length) next = source.slice(0, block.start) + source.slice(block.end);
+      else next = source.slice(0, block.start) + '<style data-lyra-devtool>\n' + css + '\n</style>' + source.slice(block.end);
+    } else if (rules.length) {
+      const tag = '<style data-lyra-devtool>\n' + css + '\n</style>\n';
+      if (/<\/body>/i.test(source)) next = source.replace(/<\/body>/i, tag + "</body>");
+      else next = source + (source.endsWith("\n") ? "" : "\n") + tag;
+    } else {
+      next = source;
+    }
+    setSourceValue(next, false);
+    const note = currentNote();
+    if (note) note.html = next;
+    state.sourceMap = annotateHtml(next).map;
+    markDirty();
+    schedulePreview(!!state.selectedSelector);
+    scheduleSave();
+    renderCssRules();
+  }
+  function applyCssRule() {
+    const draft = currentCssDraft();
+    const selector = draft.selector || defaultSelectorForData(state.selectedData);
+    if (!selector) return;
+    $("cssSelector").value = selector;
+    const key = cssRuleKey(selector, draft.state);
+    const block = findManagedStyle(getSource());
+    const rules = block ? parseCssRules(block.content) : [];
+    const existing = rules.find((r) => r.selector === key);
+    if (existing) existing.declarations = draft.declarations;
+    else rules.push({ selector: key, declarations: draft.declarations });
+    writeManagedCss(rules);
+  }
+  function deleteCssRule() {
+    const draft = currentCssDraft();
+    const selector = draft.selector || defaultSelectorForData(state.selectedData);
+    if (!selector) return;
+    const block = findManagedStyle(getSource());
+    if (!block) return;
+    const key = cssRuleKey(selector, draft.state);
+    const rules = parseCssRules(block.content).filter((r) => r.selector !== key);
+    writeManagedCss(rules);
+    $("cssDeclarations").value = "";
+  }
+  function syncCssFieldsForSelection() {
+    if (!state.selectedData) return;
+    const selector = defaultSelectorForData(state.selectedData);
+    if (selector) {
+      $("cssSelector").value = selector;
+      $("cssDeclarations").value = "";
+      loadCssRuleForDraft();
+    }
+  }
+
   function infoHtml(data) {
     return '<b>' + escapeHtml(data.tag || "") + "</b> · " +
       escapeHtml(data.selector || "") +
@@ -970,12 +1144,14 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     state.selectedSrcId = data.srcId;
     state.selectedSelector = data.selector || "";
     state.selectedLine = entry.line;
+    state.selectedData = data;
     $("inspectorLine").textContent = "Ln " + entry.line;
     $("selInfo").innerHTML = infoHtml(data);
     $("sourcePos").textContent = "Ln " + entry.line;
     $("attrId").value = data.id || "";
     $("attrClass").value = data.className || "";
     syncInspector(data.computed || {});
+    syncCssFieldsForSelection();
     setInspectorEnabled(true);
     highlightLine(entry.line, !isReselect);
   }
@@ -1334,6 +1510,11 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       if (file) await handleImageFile(file).catch(showError);
     });
     $("applyAttrsBtn").addEventListener("click", applyAttributes);
+    $("applyCssRuleBtn").addEventListener("click", applyCssRule);
+    $("deleteCssRuleBtn").addEventListener("click", deleteCssRule);
+    $("cssSelector").addEventListener("change", loadCssRuleForDraft);
+    $("cssState").addEventListener("change", loadCssRuleForDraft);
+    $("domSearch").addEventListener("input", () => renderDomTree());
     document.querySelectorAll(".dev-tab").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
