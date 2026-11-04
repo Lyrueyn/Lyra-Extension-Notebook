@@ -85,6 +85,13 @@
         </section>
 
         <section class="inspector-group">
+          <h3>CSS property</h3>
+          <div class="autocomplete-wrap"><input id="cssPropSearch" class="css-prop-search" type="text" placeholder="Search any CSS property…" spellcheck="false" autocomplete="off"/></div>
+          <div class="tab-hint">Type to search all supported CSS properties; choose one to add an inline style for the selected element.</div>
+          <div id="inlineStyleRows" class="inline-style-rows"></div>
+        </section>
+
+        <section class="inspector-group">
           <h3>Flex quick actions</h3>
           <div class="flex-presets">
             <button data-flex="row-start" type="button">row / start</button>
@@ -159,7 +166,7 @@
   </main>
 </div>
 
-<div id="errorMask" class="mask" hidden>
+<div id="autocompletePopup" class="autocomplete-popup" hidden></div>\n<div id="errorMask" class="mask" hidden>
   <div class="dialog">
     <h2>笔记本无法打开</h2>
     <p id="errorText"></p>

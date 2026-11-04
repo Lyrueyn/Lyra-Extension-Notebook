@@ -228,3 +228,19 @@ select:disabled, input:disabled, button:disabled { opacity: .45; cursor: default
 .dom-actions input { min-width: 0; background: #0b1118; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; font: 11px Consolas, "Microsoft YaHei", sans-serif; outline: none; }
 .dom-actions input:focus { border-color: var(--accent); }
 .dom-actions button { padding: 4px 7px; font-size: 10px; }
+
+/* CSS property autocomplete */
+.autocomplete-wrap { position: relative; }
+.css-prop-search { width: 100%; background: #0b1118; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; outline: none; font: 11px Consolas, "Microsoft YaHei", sans-serif; }
+.css-prop-search:focus { border-color: var(--accent); }
+.inline-style-rows { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+.inline-style-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 24px; gap: 4px; align-items: center; }
+.inline-style-row .prop { color: #7ee0ff; font: 10px Consolas, "Cascadia Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inline-style-row input { min-width: 0; width: 100%; background: #0b1118; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 5px; outline: none; font: 10px Consolas, "Microsoft YaHei", sans-serif; }
+.inline-style-row input:focus { border-color: var(--accent); }
+.inline-style-row .remove { width: 22px; height: 22px; padding: 0; border: 1px solid #3a2730; background: transparent; color: #ff9aaa; border-radius: 5px; font-size: 13px; }
+.inline-style-row .remove:hover { border-color: #7a3b4b; }
+.inline-style-empty { color: #617486; font-size: 10px; padding: 3px 0; }
+.autocomplete-popup { position: fixed; z-index: 200; max-height: 240px; overflow: auto; background: #111b25; border: 1px solid #345066; border-radius: 7px; box-shadow: 0 10px 28px rgba(0,0,0,.5); min-width: 180px; padding: 3px; }
+.autocomplete-item { padding: 4px 7px; border-radius: 4px; color: #c8d7e6; font: 11px Consolas, "Microsoft YaHei", monospace; cursor: pointer; white-space: nowrap; }
+.autocomplete-item:hover, .autocomplete-item.active { background: #1d4d66; color: #fff; }

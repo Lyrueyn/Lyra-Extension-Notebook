@@ -307,6 +307,210 @@
     }
   }
 
+  // ---------- 全量 CSS 属性补全 ----------
+  let cachedCssProperties = null;
+  function getCssProperties() {
+    if (cachedCssProperties) return cachedCssProperties;
+    const style = document.createElement("div").style;
+    const set = new Set();
+    for (const key in style) {
+      if (/^[a-zA-Z]/.test(key)) set.add(cssProp(key));
+    }
+    ["float", "clear", "content", "cursor", "filter", "backdrop-filter", "appearance"].forEach((p) => set.add(p));
+    cachedCssProperties = Array.from(set).sort();
+    return cachedCssProperties;
+  }
+
+  const VALUE_SUGGESTIONS = {
+    display: ["block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid", "contents", "none"],
+    position: ["static", "relative", "absolute", "fixed", "sticky"],
+    "flex-direction": ["row", "row-reverse", "column", "column-reverse"],
+    "flex-wrap": ["nowrap", "wrap", "wrap-reverse"],
+    "justify-content": ["flex-start", "center", "flex-end", "space-between", "space-around", "space-evenly", "start", "end"],
+    "align-items": ["stretch", "flex-start", "center", "flex-end", "baseline", "start", "end"],
+    "align-content": ["stretch", "flex-start", "center", "flex-end", "space-between", "space-around", "start", "end"],
+    "text-align": ["left", "center", "right", "justify", "start", "end"],
+    "font-weight": ["100", "200", "300", "400", "500", "600", "700", "800", "900", "normal", "bold"],
+    "font-style": ["normal", "italic", "oblique"],
+    "text-transform": ["none", "uppercase", "lowercase", "capitalize"],
+    "text-decoration": ["none", "underline", "overline", "line-through"],
+    "white-space": ["normal", "nowrap", "pre", "pre-wrap", "pre-line", "break-spaces"],
+    "word-break": ["normal", "break-all", "keep-all", "break-word"],
+    "overflow-wrap": ["normal", "break-word", "anywhere"],
+    "background-repeat": ["repeat", "no-repeat", "repeat-x", "repeat-y", "space", "round"],
+    "background-size": ["auto", "cover", "contain"],
+    "border-style": ["none", "solid", "dashed", "dotted", "double", "groove", "ridge", "inset", "outset"],
+    "border-collapse": ["separate", "collapse"],
+    "table-layout": ["auto", "fixed"],
+    "vertical-align": ["baseline", "top", "middle", "bottom", "text-top", "text-bottom"],
+    "list-style-type": ["disc", "circle", "square", "decimal", "lower-alpha", "upper-alpha", "none"],
+    "object-fit": ["fill", "contain", "cover", "none", "scale-down"],
+    "mix-blend-mode": ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
+    "pointer-events": ["auto", "none"],
+    "user-select": ["auto", "none", "text", "all"],
+    "isolation": ["auto", "isolate"],
+    "appearance": ["none", "auto"],
+    "resize": ["none", "both", "horizontal", "vertical"],
+    "cursor": ["auto", "default", "pointer", "text", "move", "grab", "not-allowed"],
+  };
+  function getValueSuggestions(prop) {
+    const key = String(prop || "").toLowerCase();
+    const out = [];
+    const add = (v) => { if (v && !out.includes(v)) out.push(v); };
+    (VALUE_SUGGESTIONS[key] || []).forEach(add);
+    ["initial", "inherit", "unset", "revert", "revert-layer", "auto", "none", "normal", "0", "1px", "2px", "4px", "8px", "12px", "16px", "1rem", "1em", "50%", "100%"].forEach(add);
+    if (/color|background|border|outline|fill|stroke/.test(key)) {
+      ["#000000", "#ffffff", "transparent", "currentColor"].forEach(add);
+    }
+    if (/family/.test(key)) ["system-ui", "sans-serif", "serif", "monospace"].forEach(add);
+    return out;
+  }
+
+  let autocompletePopup = null;
+  let autocompleteHideTimer = 0;
+  function hideAutocomplete() {
+    if (autocompletePopup) autocompletePopup.hidden = true;
+  }
+  function autocompleteItemsFor(input, getItems) {
+    const items = getItems(input.value || "");
+    return items.slice(0, 80);
+  }
+  function attachAutocomplete(input, getItems, onPick, options) {
+    let active = -1;
+    let items = [];
+    const popup = $("autocompletePopup");
+    const hide = () => { popup.hidden = true; active = -1; };
+    const choose = (i) => {
+      if (i < 0 || i >= items.length) return;
+      const value = items[i];
+      onPick(value);
+      hide();
+    };
+    const show = (reset) => {
+      items = autocompleteItemsFor(input, getItems);
+      if (!items.length) { hide(); return; }
+      if (reset !== false) active = 0;
+      popup.innerHTML = "";
+      items.forEach((item, i) => {
+        const el = document.createElement("div");
+        el.className = "autocomplete-item" + (i === active ? " active" : "");
+        el.textContent = item;
+        el.addEventListener("mousedown", (e) => e.preventDefault());
+        el.addEventListener("click", () => choose(i));
+        popup.appendChild(el);
+      });
+      const rect = input.getBoundingClientRect();
+      popup.style.left = Math.round(rect.left) + "px";
+      popup.style.top = Math.round(rect.bottom + 2) + "px";
+      popup.style.width = Math.max(180, Math.round(rect.width)) + "px";
+      popup.hidden = false;
+      const current = popup.children[active];
+      if (current) current.scrollIntoView({ block: "nearest" });
+    };
+    input.addEventListener("input", () => show(true));
+    input.addEventListener("focus", () => show(true));
+    const enterAcceptsFirst = !options || options.enterAcceptsFirst !== false;
+    input.addEventListener("keydown", (e) => {
+      if (popup.hidden) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          show(true);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          if (!enterAcceptsFirst) { hide(); input.blur(); return; }
+          show(true);
+          if (items.length) { active = 0; choose(0); }
+        }
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        active = active < 0 ? 0 : Math.min(items.length - 1, active + 1);
+        show(false);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        active = active <= 0 ? items.length - 1 : active - 1;
+        show(false);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (active >= 0) choose(active);
+        else if (enterAcceptsFirst) { active = 0; choose(0); }
+        else { hide(); input.blur(); }
+      } else if (e.key === "Escape") {
+        hide();
+      }
+    });
+    input.addEventListener("blur", () => { clearTimeout(autocompleteHideTimer); autocompleteHideTimer = setTimeout(hide, 120); });
+    return { show, hide };
+  }
+  function createInlineStyleRow(prop, value) {
+    const row = document.createElement("div");
+    row.className = "inline-style-row";
+    row.dataset.prop = prop;
+    const label = document.createElement("span");
+    label.className = "prop";
+    label.textContent = prop;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value || "";
+    input.spellcheck = false;
+    input.dataset.prop = prop;
+    attachAutocomplete(input, (typed) => {
+      const q = String(typed || "").trim().toLowerCase();
+      const all = getValueSuggestions(prop);
+      return q ? all.filter((v) => v.toLowerCase().includes(q)) : all;
+    }, (picked) => {
+      input.value = picked;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, { enterAcceptsFirst: false });
+    input.addEventListener("change", () => {
+      applyStyleObject({ [prop]: input.value.trim() });
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove";
+    remove.title = "Remove " + prop;
+    remove.textContent = "×";
+    remove.addEventListener("click", () => applyStyleObject({ [prop]: "" }));
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(remove);
+    return row;
+  }
+  function renderInlineStyles(inlineStyle) {
+    const host = $("inlineStyleRows");
+    if (!host) return;
+    host.innerHTML = "";
+    const decls = parseStyleText(inlineStyle || "");
+    const props = Object.keys(decls).filter((p) => p && p !== "style");
+    if (!props.length) {
+      const empty = document.createElement("div");
+      empty.className = "inline-style-empty";
+      empty.textContent = "No inline styles. Search a property above to add one.";
+      host.appendChild(empty);
+      return;
+    }
+    for (const prop of props) host.appendChild(createInlineStyleRow(prop, decls[prop]));
+  }
+  function addInlineProperty(prop) {
+    if (!state.selectedSrcId) { alert("Select an element first."); return; }
+    const host = $("inlineStyleRows");
+    const current = Array.from(host.querySelectorAll(".inline-style-row")).find((row) => row.dataset.prop === prop);
+    if (current) {
+      const input = current.querySelector("input");
+      input.focus();
+      input.select();
+      return;
+    }
+    const empty = host.querySelector(".inline-style-empty");
+    if (empty) empty.remove();
+    const row = createInlineStyleRow(prop, "");
+    host.appendChild(row);
+    const input = row.querySelector("input");
+    input.focus();
+    input.select();
+  }
+
   // ---------- CodeMirror 源码编辑器 ----------
   function getSource() {
     return state.mirror ? state.mirror.getValue() : "";
@@ -644,7 +848,13 @@
     return `
 (function(){
   var SOURCE = ${JSON.stringify(PREVIEW_SOURCE)};
-  var inspect = false, hovered = null, hoverOldOutline = "", hoverOldOffset = "";
+  var inspect = false, hovered = null;
+  var lyraHoverStyle = document.createElement("style");
+  lyraHoverStyle.textContent = ".lyra-inspect-hover { outline: 2px solid #66ccff !important; outline-offset: 1px !important; }";
+  document.head.appendChild(lyraHoverStyle);
+  function cleanClass(el) {
+    return (el.getAttribute("class") || "").split(/\s+/).filter(function(c){ return c && c !== "lyra-inspect-hover"; }).join(" ");
+  }
   function send(type, data) {
     var msg = Object.assign({ source: SOURCE, type: type }, data || {});
     try { parent.postMessage(msg, "*"); } catch(e) {}
@@ -666,7 +876,8 @@
     var parts = [];
     while (el && el.nodeType === 1 && el !== document.documentElement) {
       var part = el.tagName.toLowerCase();
-      if (el.classList && el.classList.length) part += "." + Array.prototype.map.call(el.classList, cssEscape).join(".");
+      var cleanCls = cleanClass(el);
+      if (cleanCls) part += "." + cleanCls.split(/\s+/).map(cssEscape).join(".");
       var parent = el.parentElement;
       if (parent) {
         var same = Array.prototype.filter.call(parent.children, function(c){ return c.tagName === el.tagName; });
@@ -689,16 +900,14 @@
       tag: el.tagName.toLowerCase(),
       selector: selectorOf(el),
       id: el.id || "",
-      className: el.getAttribute("class") || "",
+      className: cleanClass(el),
       inlineStyle: el.getAttribute("style") || "",
       computed: computed,
       text: text
     };
   }
   function clearHover() {
-    if (hovered) {
-      try { hovered.style.outline = hoverOldOutline; hovered.style.outlineOffset = hoverOldOffset; } catch(e) {}
-    }
+    if (hovered && hovered.classList) hovered.classList.remove("lyra-inspect-hover");
     hovered = null;
   }
   function setHover(el) {
@@ -706,10 +915,7 @@
     clearHover();
     if (!el) return;
     hovered = el;
-    hoverOldOutline = el.style.outline || "";
-    hoverOldOffset = el.style.outlineOffset || "";
-    el.style.outline = "2px solid #66ccff";
-    el.style.outlineOffset = "1px";
+    if (el.classList) el.classList.add("lyra-inspect-hover");
   }
   document.addEventListener("mouseover", function(e){
     if (!inspect) return;
@@ -748,7 +954,7 @@
       srcId: sid,
       tag: el.tagName.toLowerCase(),
       id: el.id || "",
-      className: el.getAttribute("class") || "",
+      className: cleanClass(el),
       text: ownText.replace(/\\s+/g, " ").trim().slice(0, 60),
       children: children
     };
@@ -891,6 +1097,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("sourcePos").textContent = "Ln 1";
     $("attrId").value = "";
     $("attrClass").value = "";
+    renderInlineStyles("");
     setInspectorEnabled(false);
   }
   // ---------- DOM tree / assets / tabs ----------
@@ -1347,6 +1554,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("attrClass").value = data.className || "";
     $("domNewTag").value = entry.tag;
     syncInspector(data.computed || {});
+    renderInlineStyles(data.inlineStyle || "");
     syncCssFieldsForSelection();
     setInspectorEnabled(true);
     highlightLine(entry.line, !isReselect && !fromSource, !isReselect && !fromSource);
@@ -1716,6 +1924,19 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       $("previewFrame").style.width = value;
     });
     $("applyAttrsBtn").addEventListener("click", applyAttributes);
+    attachAutocomplete($("cssPropSearch"), (value) => {
+      const q = String(value || "").trim().toLowerCase();
+      let list = getCssProperties();
+      if (q) list = list.filter((p) => p.toLowerCase().includes(q));
+      return list.sort((a, b) => {
+        const as = a.toLowerCase().startsWith(q) ? 0 : 1;
+        const bs = b.toLowerCase().startsWith(q) ? 0 : 1;
+        return as - bs || a.localeCompare(b);
+      });
+    }, (prop) => {
+      $("cssPropSearch").value = "";
+      addInlineProperty(prop);
+    });
     $("applyCssRuleBtn").addEventListener("click", applyCssRule);
     $("deleteCssRuleBtn").addEventListener("click", deleteCssRule);
     $("cssSelector").addEventListener("change", loadCssRuleForDraft);
@@ -1785,6 +2006,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   }
 
   bind();
-  window.__lyraDebug = { state, applyStyleObject, applySelection, renderPreview };
+  window.__lyraDebug = { state, applyStyleObject, applySelection, renderPreview, getCssProperties, getValueSuggestions };
   init().catch(showError);
 })();
