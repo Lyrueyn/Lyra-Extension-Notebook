@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   "use strict";
 
   const FORMAT = "lyra-notebook";
@@ -544,6 +544,8 @@
   function annotateHtml(source) {
     let out = "", i = 0, id = 0, line = 1;
     const map = {};
+    const stack = [];
+    const voidTags = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
     const countLines = (s) => (s.match(/\n/g) || []).length;
     while (i < source.length) {
       if (source.startsWith("<!--", i)) {
@@ -556,8 +558,19 @@
         if (source[i + 1] === "/" || source[i + 1] === "!" || source[i + 1] === "?") {
           const end = findTagEnd(source, i);
           if (end < 0) { out += source.slice(i); break; }
-          const chunk = source.slice(i, end + 1);
-          out += chunk; line += countLines(chunk); i = end + 1; continue;
+          const raw = source.slice(i, end + 1);
+          const close = raw.match(/^<\s*\/\s*([a-zA-Z][\w:-]*)/);
+          if (close) {
+            const closeTag = close[1].toLowerCase();
+            for (let k = stack.length - 1; k >= 0; k--) {
+              if (stack[k].tag === closeTag) {
+                map[stack[k].id].fullEnd = end + 1;
+                stack.splice(k, 1);
+                break;
+              }
+            }
+          }
+          out += raw; line += countLines(raw); i = end + 1; continue;
         }
         const end = findTagEnd(source, i);
         if (end < 0) { out += source.slice(i); break; }
@@ -565,12 +578,14 @@
         const m = raw.match(/^<\s*([a-zA-Z][\w:-]*)/);
         if (!m) { out += raw; line += countLines(raw); i = end + 1; continue; }
         const tag = m[1].toLowerCase();
+        const selfClosing = /\/\s*>$/.test(raw);
         id++;
-        const injected = /\/\s*>$/.test(raw)
+        const injected = selfClosing
           ? raw.replace(/\/\s*>$/, ' data-lyra-src="' + id + '"/>')
           : raw.replace(/>$/, ' data-lyra-src="' + id + '">');
         out += injected;
-        map[id] = { start: i, end: end + 1, line: line, tag: tag };
+        map[id] = { start: i, end: end + 1, line: line, tag: tag, fullEnd: null };
+        if (selfClosing || voidTags.has(tag)) map[id].fullEnd = end + 1;
         line += countLines(raw);
         i = end + 1;
         if (tag === "script" || tag === "style" || tag === "textarea") {
@@ -582,8 +597,11 @@
               const closeEnd = closeStart + cm[0].length;
               const chunk = source.slice(i, closeEnd);
               out += chunk; line += countLines(chunk); i = closeEnd;
+              map[id].fullEnd = closeEnd;
             }
           } catch { }
+        } else if (!selfClosing && !voidTags.has(tag)) {
+          stack.push({ tag: tag, id: id });
         }
         continue;
       }
@@ -591,6 +609,14 @@
       const end = next < 0 ? source.length : next;
       const chunk = source.slice(i, end);
       out += chunk; line += countLines(chunk); i = end;
+    }
+    // 可选闭合标签或未闭合结构：用后续闭合标签兜底补全。
+    for (const entry of stack) {
+      if (map[entry.id].fullEnd == null) {
+        const re = new RegExp("</" + entry.tag + "\\s*>", "i");
+        const cm = re.exec(source.slice(map[entry.id].end));
+        if (cm) map[entry.id].fullEnd = map[entry.id].end + cm.index + cm[0].length;
+      }
     }
     return { html: out, map };
   }
@@ -991,6 +1017,51 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     schedulePreview(false);
     scheduleSave();
   }
+  function applySourceEdit(next) {
+    setSourceValue(next, false);
+    const note = currentNote();
+    if (note) note.html = next;
+    state.sourceMap = annotateHtml(next).map;
+    clearSelection();
+    markDirty();
+    schedulePreview(false);
+    scheduleSave();
+    renderDomTree();
+  }
+  function renameSelectedTag() {
+    if (!state.selectedSrcId) { alert("Select an element first."); return; }
+    const entry = state.sourceMap[state.selectedSrcId];
+    if (!entry) return;
+    const newTag = ($("domNewTag").value || "").trim().toLowerCase();
+    if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(newTag)) { alert("Invalid tag name."); return; }
+    if (["html", "head", "body"].includes(entry.tag)) { alert("Cannot rename structural tag <" + entry.tag + ">."); return; }
+    if (entry.fullEnd == null) { alert("Cannot determine source range for this element."); return; }
+    const source = getSource();
+    if (entry.fullEnd <= entry.end) {
+      const open = source.slice(entry.start, entry.end).replace(/^<\s*[a-zA-Z][\w:-]*/, "<" + newTag);
+      applySourceEdit(source.slice(0, entry.start) + open + source.slice(entry.end));
+      return;
+    }
+    const element = source.slice(entry.start, entry.fullEnd);
+    const close = element.match(/<\s*\/\s*([a-zA-Z][\w:-]*)\s*>\s*$/);
+    if (!close || close[1].toLowerCase() !== entry.tag) { alert("Cannot find matching closing tag."); return; }
+    if (["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"].includes(newTag)) {
+      alert("Cannot rename a container to a void tag."); return;
+    }
+    const closeIndex = entry.start + close.index;
+    const openNew = source.slice(entry.start, closeIndex).replace(/^<\s*[a-zA-Z][\w:-]*/, "<" + newTag);
+    applySourceEdit(openNew + "</" + newTag + ">" + source.slice(entry.fullEnd));
+  }
+  function deleteSelectedElement() {
+    if (!state.selectedSrcId) { alert("Select an element first."); return; }
+    const entry = state.sourceMap[state.selectedSrcId];
+    if (!entry) return;
+    if (entry.fullEnd == null) { alert("Cannot determine source range for this element."); return; }
+    if (["html", "head", "body"].includes(entry.tag)) { alert("Cannot delete structural tag <" + entry.tag + ">."); return; }
+    if (!confirm("Delete <" + entry.tag + "> from the source?")) return;
+    const source = getSource();
+    applySourceEdit(source.slice(0, entry.start) + source.slice(entry.fullEnd));
+  }
   function renderAssets() {
     const host = $("assetList");
     if (!host) return;
@@ -1222,6 +1293,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("sourcePos").textContent = "Ln " + entry.line;
     $("attrId").value = data.id || "";
     $("attrClass").value = data.className || "";
+    $("domNewTag").value = entry.tag;
     syncInspector(data.computed || {});
     syncCssFieldsForSelection();
     setInspectorEnabled(true);
@@ -1597,6 +1669,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("cssSelector").addEventListener("change", loadCssRuleForDraft);
     $("cssState").addEventListener("change", loadCssRuleForDraft);
     $("domSearch").addEventListener("input", () => renderDomTree());
+    $("domRenameBtn").addEventListener("click", renameSelectedTag);
+    $("domDeleteBtn").addEventListener("click", deleteSelectedElement);
     document.querySelectorAll(".dev-tab").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });

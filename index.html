@@ -141,6 +141,11 @@
         <div id="tabDom" class="tab-content" hidden>
           <div class="tab-hint">Click a node to select it in the preview and jump to its source line.</div>
           <input id="domSearch" class="dom-search" type="text" placeholder="filter tag / id / class" spellcheck="false"/>
+          <div class="dom-actions">
+            <input id="domNewTag" type="text" placeholder="new tag" spellcheck="false"/>
+            <button id="domRenameBtn" class="ghost" type="button">Rename</button>
+            <button id="domDeleteBtn" class="ghost danger-text" type="button">Delete</button>
+          </div>
           <div id="domTree" class="dom-tree"></div>
         </div>
         <div id="tabAssets" class="tab-content" hidden>
