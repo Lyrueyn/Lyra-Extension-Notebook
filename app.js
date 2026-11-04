@@ -313,13 +313,29 @@
   }
   function setSourceValue(text, resetHistory) {
     if (!state.mirror) return;
+    const cm = state.mirror;
+    const cursor = cm.getCursor();
+    const scroll = cm.getScrollInfo();
     state.suppressMirror = true;
     try {
-      state.mirror.setValue(text || "");
+      cm.setValue(text || "");
       if (resetHistory) {
-        state.mirror.clearHistory();
-        state.mirror.setCursor({ line: 0, ch: 0 });
+        cm.clearHistory();
+        cm.setCursor({ line: 0, ch: 0 });
+      } else {
+        cm.setCursor(cursor);
+        cm.scrollTo(scroll.left, scroll.top);
       }
+    } finally {
+      state.suppressMirror = false;
+    }
+  }
+  function replaceSourceRange(start, end, text) {
+    const cm = state.mirror;
+    if (!cm) return;
+    state.suppressMirror = true;
+    try {
+      cm.replaceRange(text, cm.posFromIndex(start), cm.posFromIndex(end));
     } finally {
       state.suppressMirror = false;
     }
@@ -1443,8 +1459,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       else decls[key] = String(value);
     }
     tag = setTagStyle(tag, decls);
-    const next = source.slice(0, entry.start) + tag + source.slice(entry.end);
-    setSourceValue(next, false);
+    replaceSourceRange(entry.start, entry.end, tag);
+    const next = getSource();
     const note = state.notes.get(state.currentId);
     if (note) note.html = next;
     state.sourceMap = annotateHtml(next).map;
@@ -1459,8 +1475,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     const source = getSource();
     const tag = source.slice(entry.start, entry.end);
     const stripped = tag.replace(/\sstyle\s*=\s*(["'])[\s\S]*?\1/i, "");
-    const next = source.slice(0, entry.start) + stripped + source.slice(entry.end);
-    setSourceValue(next, false);
+    replaceSourceRange(entry.start, entry.end, stripped);
+    const next = getSource();
     const note = state.notes.get(state.currentId);
     if (note) note.html = next;
     state.sourceMap = annotateHtml(next).map;
