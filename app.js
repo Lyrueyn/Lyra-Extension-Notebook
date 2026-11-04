@@ -1349,7 +1349,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     syncInspector(data.computed || {});
     syncCssFieldsForSelection();
     setInspectorEnabled(true);
-    highlightLine(entry.line, !isReselect && !fromSource);
+    highlightLine(entry.line, !isReselect && !fromSource, !isReselect && !fromSource);
   }
   function toHexColor(value) {
     if (!value) return "#ffffff";
@@ -1489,7 +1489,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   function updateLineNumbers() {
     // CodeMirror 自带行号；保留空函数兼容旧调用点。
   }
-  function highlightLine(line, focus) {
+  function highlightLine(line, focus, scroll) {
     const cm = state.mirror;
     if (!cm) return;
     try {
@@ -1498,7 +1498,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       }
       state.highlightedLine = line;
       cm.addLineClass(line - 1, "background", "cm-active-source-line");
-      cm.scrollIntoView({ line: line - 1, ch: 0 }, 100);
+      if (scroll !== false) cm.scrollIntoView({ line: line - 1, ch: 0 }, 100);
       if (focus) {
         cm.focus();
         cm.setCursor({ line: line - 1, ch: 0 });
