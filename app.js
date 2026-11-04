@@ -936,10 +936,7 @@
     return `
 (function(){
   var SOURCE = ${JSON.stringify(PREVIEW_SOURCE)};
-  var inspect = false, hovered = null, selectedEl = null;
-  var lyraHoverStyle = document.createElement("style");
-  lyraHoverStyle.textContent = ".lyra-inspect-hover { outline: 2px solid #66ccff !important; outline-offset: 1px !important; }";
-  document.head.appendChild(lyraHoverStyle);
+    var inspect = false, hovered = null, selectedEl = null, highlightBox = null;
   function cleanClass(el) {
     return (el.getAttribute("class") || "").split(/\s+/).filter(function(c){ return c && c !== "lyra-inspect-hover"; }).join(" ");
   }
@@ -1002,17 +999,35 @@
     }
     return null;
   }
+  function ensureHighlightBox() {
+    if (highlightBox) return highlightBox;
+    highlightBox = document.createElement("div");
+    highlightBox.style.cssText = "position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #66ccff;box-shadow:0 0 0 1px rgba(102,204,255,.35);border-radius:2px;display:none;box-sizing:border-box;";
+    document.body.appendChild(highlightBox);
+    return highlightBox;
+  }
+  function updateHighlightBox() {
+    if (!hovered) return;
+    var box = ensureHighlightBox();
+    var r = hovered.getBoundingClientRect();
+    box.style.left = Math.round(r.left) + "px";
+    box.style.top = Math.round(r.top) + "px";
+    box.style.width = Math.max(2, Math.round(r.width)) + "px";
+    box.style.height = Math.max(2, Math.round(r.height)) + "px";
+    box.style.display = "block";
+  }
   function clearHover() {
-    if (hovered && hovered.classList) hovered.classList.remove("lyra-inspect-hover");
     hovered = null;
+    if (highlightBox) highlightBox.style.display = "none";
   }
   function setHover(el) {
-    if (hovered === el) return;
-    clearHover();
-    if (!el) return;
+    if (hovered === el) { updateHighlightBox(); return; }
     hovered = el;
-    if (el.classList) el.classList.add("lyra-inspect-hover");
+    if (!el) { clearHover(); return; }
+    updateHighlightBox();
   }
+  window.addEventListener("scroll", updateHighlightBox, true);
+  window.addEventListener("resize", updateHighlightBox);
   document.addEventListener("mouseover", function(e){
     if (!inspect) return;
     var el = annotated(e.target);
