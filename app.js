@@ -684,7 +684,7 @@
       const line = lines[i];
       if (!state) {
         const trimmed = line.trim();
-        if (/<[a-zA-Z][\w:-]*$/.test(trimmed) && !trimmed.includes(">")) {
+        if (/<[a-zA-Z][\w:-]*$/.test(trimmed)) {
           const base = (line.match(/^[ \t]*/) || [""])[0];
           state = { base: base, style: false };
         }
@@ -936,7 +936,7 @@
     return `
 (function(){
   var SOURCE = ${JSON.stringify(PREVIEW_SOURCE)};
-  var inspect = false, hovered = null;
+  var inspect = false, hovered = null, selectedEl = null;
   var lyraHoverStyle = document.createElement("style");
   lyraHoverStyle.textContent = ".lyra-inspect-hover { outline: 2px solid #66ccff !important; outline-offset: 1px !important; }";
   document.head.appendChild(lyraHoverStyle);
@@ -994,6 +994,14 @@
       text: text
     };
   }
+  function nearestAnnotatedParent(el) {
+    var p = el && el.parentElement;
+    while (p) {
+      if (p.hasAttribute && p.hasAttribute("data-lyra-src")) return p;
+      p = p.parentElement;
+    }
+    return null;
+  }
   function clearHover() {
     if (hovered && hovered.classList) hovered.classList.remove("lyra-inspect-hover");
     hovered = null;
@@ -1020,8 +1028,15 @@
     if (!el) return;
     e.preventDefault();
     e.stopPropagation();
+    if (e.altKey) {
+      var parent = nearestAnnotatedParent(el);
+      if (parent) el = parent;
+    }
+    clearHover();
+    var payload = pick(el);
+    selectedEl = el;
     setHover(el);
-    send("select", pick(el));
+    send("select", payload);
   }, true);
   function buildTree(el, depth) {
     if (!el || depth > 12) return null;
@@ -1056,16 +1071,20 @@
     if (d.type === "inspect") { inspect = !!d.value; if (!inspect) clearHover(); }
     else if (d.type === "clearHighlight") { clearHover(); }
     else if (d.type === "getTree") { sendTree(); }
+    else if (d.type === "selectParent") {
+      var parent = selectedEl ? nearestAnnotatedParent(selectedEl) : null;
+      if (parent) { var payload = pick(parent); selectedEl = parent; setHover(parent); send("select", payload); }
+    }
     else if (d.type === "selectById") {
       try {
         var target = document.querySelector("[data-lyra-src=\\"" + String(d.srcId).replace(/"/g, "") + "\\"]");
-        if (target) { setHover(target); send("select", pick(target)); }
+        if (target) { clearHover(); var payload = pick(target); selectedEl = target; setHover(target); send("select", payload); }
       } catch(err) {}
     }
     else if (d.type === "reselect") {
       try {
         var el = d.selector ? document.querySelector(d.selector) : null;
-        if (el) { setHover(el); var d = pick(el); d.reselect = true; send("select", d); }
+        if (el) { clearHover(); var payload = pick(el); payload.reselect = true; selectedEl = el; setHover(el); send("select", payload); }
       } catch(err) {}
     }
   });
@@ -1153,7 +1172,6 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       postToPreview("inspect", { value: state.inspectMode });
       postToPreview("getTree", {});
       if (state.pendingReselect) postToPreview("reselect", { selector: state.pendingReselect });
-      setTimeout(selectFromSourceCursor, 60);
     } else if (data.type === "tree") {
       state.domTree = data.tree || null;
       if (state.activeTab === "dom") renderDomTree();
@@ -1167,6 +1185,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   function setInspectorEnabled(enabled) {
     document.querySelectorAll("[data-style]").forEach((el) => { el.disabled = !enabled; });
     $("jumpSourceBtn").disabled = !enabled;
+    $("selectParentBtn").disabled = !enabled;
     $("clearStyleBtn").disabled = !enabled;
     $("attrId").disabled = !enabled;
     $("attrClass").disabled = !enabled;
@@ -1178,7 +1197,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     state.selectedLine = 0;
     state.selectedData = null;
     $("inspectorLine").textContent = "No selection";
-    $("selInfo").textContent = "Click an element in the preview. Turn on Inspect to intercept clicks.";
+    $("selInfo").textContent = "Click an element in the preview. Turn on Inspect to intercept clicks. Alt+Click selects parent.";
     $("sourcePos").textContent = "Ln 1";
     $("attrId").value = "";
     $("attrClass").value = "";
@@ -1642,7 +1661,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     renderInlineStyles(data.inlineStyle || "");
     syncCssFieldsForSelection();
     setInspectorEnabled(true);
-    highlightLine(entry.line, !isReselect && !fromSource, !isReselect && !fromSource);
+    highlightLine(entry.line, !isReselect && !fromSource, !isReselect && !fromSource, entry.start);
   }
   function toHexColor(value) {
     if (!value) return "#ffffff";
@@ -1789,7 +1808,7 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   function updateLineNumbers() {
     // CodeMirror 自带行号；保留空函数兼容旧调用点。
   }
-  function highlightLine(line, focus, scroll) {
+  function highlightLine(line, focus, scroll, cursorIndex) {
     const cm = state.mirror;
     if (!cm) return;
     try {
@@ -1801,7 +1820,11 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       if (scroll !== false) cm.scrollIntoView({ line: line - 1, ch: 0 }, 100);
       if (focus) {
         cm.focus();
-        cm.setCursor({ line: line - 1, ch: 0 });
+        if (cursorIndex != null) {
+          try { cm.setCursor(cm.posFromIndex(cursorIndex)); } catch { cm.setCursor({ line: line - 1, ch: 0 }); }
+        } else {
+          cm.setCursor({ line: line - 1, ch: 0 });
+        }
       }
     } catch { }
     $("sourcePos").textContent = "Ln " + line;
@@ -2062,7 +2085,11 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
       postToPreview("inspect", { value: state.inspectMode });
     });
     $("jumpSourceBtn").addEventListener("click", () => {
-      if (state.selectedLine) highlightLine(state.selectedLine, true);
+      const entry = state.selectedSrcId ? state.sourceMap[state.selectedSrcId] : null;
+      if (state.selectedLine) highlightLine(state.selectedLine, true, true, entry ? entry.start : null);
+    });
+    $("selectParentBtn").addEventListener("click", () => {
+      postToPreview("selectParent", {});
     });
     $("clearStyleBtn").addEventListener("click", clearInlineStyle);
     document.querySelectorAll("[data-style]").forEach((el) => {

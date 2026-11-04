@@ -17,7 +17,9 @@
 - Assets：图片缩略图、Insert、Replace、Copy path、Delete，并显示引用次数
 - 引用检查：查找缺失资源和未使用资源
 - 预览支持 Responsive / 1440 / 1024 / 768 / 390 宽度
-- 检查元素：点击预览元素，左侧跳到对应源码行
+- 检查元素：点击预览元素，左侧跳到对应源码行；点击图片时选中的就是图片本身
+- Alt+Click 选中父容器；右侧 Actions 还有 Select parent 按钮
+- 格式化：长标签每个属性缩进 2 格，style 属性内声明缩进 4 格逐条换行
 - 源码光标同步：左边光标落在哪个元素里，右边 Dev Tool 自动显示哪个元素，不需要先 Inspect
 - 全量 CSS 属性补全：搜索浏览器实际支持并通过 CSS.supports 校验的 564 个有效属性，像 WebStorm 一样输入过滤、方向键选择、Enter 应用
 - Inline style 列表：选中元素的所有 inline 声明逐条编辑/删除，任意属性都能加
