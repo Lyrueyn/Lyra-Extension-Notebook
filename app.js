@@ -86,6 +86,45 @@
     return asset ? "data:" + (asset.mime || "application/octet-stream") + ";base64," + asset.base64 : "";
   }
 
+  // ---------- 图片资源 ----------
+  async function sha256Hex(bytes) {
+    try {
+      if (crypto && crypto.subtle) {
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      }
+    } catch { }
+    let h1 = 2166136261, h2 = 0x9e3779b9;
+    for (let i = 0; i < bytes.length; i++) {
+      h1 ^= bytes[i]; h1 = Math.imul(h1, 16777619) >>> 0;
+      h2 = (Math.imul(h2 ^ bytes[i], 0x85ebca6b) + i) >>> 0;
+    }
+    return (h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0")).repeat(4);
+  }
+  function assetExt(mime, name) {
+    const map = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/bmp": ".bmp" };
+    if (map[mime]) return map[mime];
+    const m = String(name || "").match(/\.[a-z0-9]+$/i);
+    return m ? m[0].toLowerCase() : ".bin";
+  }
+  async function addAsset(bytes, name, mime) {
+    const sha = await sha256Hex(bytes);
+    const id = "asset-" + sha.slice(0, 24);
+    if (state.assets.has(id)) return state.assets.get(id);
+    const ext = assetExt(mime, name);
+    const asset = {
+      id,
+      path: "assets/" + sha + ext,
+      name: name || ("image" + ext),
+      mime: mime || "application/octet-stream",
+      size: bytes.length,
+      sha256: sha,
+      base64: bytesToBase64(bytes),
+    };
+    state.assets.set(id, asset);
+    return asset;
+  }
+
   // ---------- Dev Tool 样式字段 ----------
   const STYLE_GROUPS = [
     {
@@ -200,6 +239,17 @@
         { p: "transition", t: "text", ph: "none" },
         { p: "filter", t: "text", ph: "none" },
         { p: "backdropFilter", t: "text", ph: "none" },
+        { p: "textShadow", t: "text", ph: "none" },
+        { p: "clipPath", t: "text", ph: "none" },
+        { p: "objectFit", t: "select", o: ["fill", "contain", "cover", "none", "scale-down"] },
+        { p: "objectPosition", t: "text", ph: "50% 50%" },
+        { p: "mixBlendMode", t: "select", o: ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "difference", "exclusion", "hue", "saturation", "color", "luminosity"] },
+        { p: "pointerEvents", t: "select", o: ["auto", "none"] },
+        { p: "userSelect", t: "select", o: ["auto", "none", "text", "all"] },
+        { p: "isolation", t: "select", o: ["auto", "isolate"] },
+        { p: "willChange", t: "text", ph: "auto" },
+        { p: "appearance", t: "select", o: ["none", "auto"] },
+        { p: "resize", t: "select", o: ["none", "both", "horizontal", "vertical"] },
         { p: "cursor", t: "select", o: ["auto", "default", "pointer", "text", "move", "grab", "not-allowed"] },
         { p: "listStyleType", t: "select", o: ["disc", "circle", "square", "decimal", "lower-alpha", "upper-alpha", "none"] },
         { p: "tableLayout", t: "select", o: ["auto", "fixed"] },
@@ -306,6 +356,7 @@
       extraKeys: {
         "Ctrl-Space": (editor) => showCmHint(editor),
         "Shift-Ctrl-Space": (editor) => showCmHint(editor),
+        "Shift-Alt-F": () => formatSource(),
       },
     });
     state.mirror = cm;
@@ -333,6 +384,42 @@
       const line = cm.getCursor().line + 1;
       $("sourcePos").textContent = "Ln " + line;
     });
+  }
+
+  function insertTextAtCursor(text) {
+    const cm = state.mirror;
+    if (!cm) return;
+    cm.replaceRange(text, cm.getCursor());
+    cm.focus();
+  }
+  async function handleImageFile(file) {
+    if (!file || !/^image\//.test(file.type || "")) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const asset = await addAsset(bytes, file.name || "image", file.type || "image/png");
+    const alt = escapeAttr(file.name || asset.name || "image");
+    insertTextAtCursor('\n<img src="' + asset.path + '" alt="' + alt + '">\n');
+    $("saveState").textContent = "未保存";
+    $("saveState").className = "save-state saving";
+  }
+  function formatSource() {
+    if (typeof window.html_beautify !== "function") return;
+    const source = getSource();
+    if (!source.trim()) return;
+    const formatted = window.html_beautify(source, {
+      indent_size: 2,
+      preserve_newlines: true,
+      max_preserve_newlines: 2,
+      wrap_line_length: 0,
+      end_with_newline: true,
+    });
+    setSourceValue(formatted, false);
+    const note = currentNote();
+    if (note) note.html = formatted;
+    state.sourceMap = annotateHtml(formatted).map;
+    clearSelection();
+    markDirty();
+    schedulePreview(false);
+    scheduleSave();
   }
 
   // ---------- 默认内容 ----------
@@ -541,7 +628,7 @@
     }
     return parts.join(" > ");
   }
-  var COMPUTED = ["display","position","top","right","bottom","left","zIndex","float","clear","boxSizing","overflow","overflowX","overflowY","visibility","flexDirection","flexWrap","justifyContent","alignItems","alignContent","alignSelf","gap","rowGap","columnGap","flexGrow","flexShrink","flexBasis","order","gridTemplateColumns","gridTemplateRows","gridAutoFlow","gridColumn","gridRow","width","minWidth","maxWidth","height","minHeight","maxHeight","aspectRatio","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing","wordSpacing","textAlign","textIndent","textTransform","textDecoration","whiteSpace","wordBreak","overflowWrap","color","backgroundColor","backgroundImage","backgroundSize","backgroundPosition","backgroundRepeat","borderWidth","borderStyle","borderColor","borderRadius","outline","boxShadow","opacity","transform","transformOrigin","transition","filter","backdropFilter","cursor","listStyleType","tableLayout","borderCollapse","verticalAlign"];
+  var COMPUTED = ["display","position","top","right","bottom","left","zIndex","float","clear","boxSizing","overflow","overflowX","overflowY","visibility","flexDirection","flexWrap","justifyContent","alignItems","alignContent","alignSelf","gap","rowGap","columnGap","flexGrow","flexShrink","flexBasis","order","gridTemplateColumns","gridTemplateRows","gridAutoFlow","gridColumn","gridRow","width","minWidth","maxWidth","height","minHeight","maxHeight","aspectRatio","paddingTop","paddingRight","paddingBottom","paddingLeft","marginTop","marginRight","marginBottom","marginLeft","fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing","wordSpacing","textAlign","textIndent","textTransform","textDecoration","whiteSpace","wordBreak","overflowWrap","color","backgroundColor","backgroundImage","backgroundSize","backgroundPosition","backgroundRepeat","borderWidth","borderStyle","borderColor","borderRadius","outline","boxShadow","opacity","transform","transformOrigin","transition","filter","backdropFilter","textShadow","clipPath","objectFit","objectPosition","mixBlendMode","pointerEvents","userSelect","isolation","willChange","appearance","resize","cursor","listStyleType","tableLayout","borderCollapse","verticalAlign"];
   function pick(el) {
     var cs = getComputedStyle(el);
     var computed = {};
@@ -551,6 +638,8 @@
       srcId: el.getAttribute("data-lyra-src") || "",
       tag: el.tagName.toLowerCase(),
       selector: selectorOf(el),
+      id: el.id || "",
+      className: el.getAttribute("class") || "",
       inlineStyle: el.getAttribute("style") || "",
       computed: computed,
       text: text
@@ -695,6 +784,9 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("customStyleName").disabled = !enabled;
     $("customStyleValue").disabled = !enabled;
     $("applyCustomStyleBtn").disabled = !enabled;
+    $("attrId").disabled = !enabled;
+    $("attrClass").disabled = !enabled;
+    $("applyAttrsBtn").disabled = !enabled;
   }
   function clearSelection() {
     state.selectedSrcId = null;
@@ -703,6 +795,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("inspectorLine").textContent = "No selection";
     $("selInfo").textContent = "Click an element in the preview. Turn on Inspect to intercept clicks.";
     $("sourcePos").textContent = "Ln 1";
+    $("attrId").value = "";
+    $("attrClass").value = "";
     setInspectorEnabled(false);
   }
   function infoHtml(data) {
@@ -719,6 +813,8 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     $("inspectorLine").textContent = "Ln " + entry.line;
     $("selInfo").innerHTML = infoHtml(data);
     $("sourcePos").textContent = "Ln " + entry.line;
+    $("attrId").value = data.id || "";
+    $("attrClass").value = data.className || "";
     syncInspector(data.computed || {});
     setInspectorEnabled(true);
     highlightLine(entry.line, !isReselect);
@@ -790,6 +886,32 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
     if (existing) return raw.replace(existing[0], ' style="' + attrValue + '"');
     if (/\/\s*>$/.test(raw)) return raw.replace(/\/\s*>$/, ' style="' + attrValue + '"/>');
     return raw.replace(/>$/, ' style="' + attrValue + '">');
+  }
+  function setTagAttribute(raw, name, value) {
+    const esc = escapeAttr(String(value == null ? "" : value));
+    const re = new RegExp("\\s" + name + "\\s*=\\s*([\"'])[\\s\\S]*?\\1", "i");
+    if (value == null || String(value) === "") return raw.replace(re, "");
+    if (re.test(raw)) return raw.replace(re, ' ' + name + '="' + esc + '"');
+    if (/\/\s*>$/.test(raw)) return raw.replace(/\/\s*>$/, ' ' + name + '="' + esc + '"/>');
+    return raw.replace(/>$/, ' ' + name + '="' + esc + '">');
+  }
+  function applyAttributes() {
+    if (!state.selectedSrcId) return;
+    const entry = state.sourceMap[state.selectedSrcId];
+    if (!entry) return;
+    const source = getSource();
+    let tag = source.slice(entry.start, entry.end);
+    tag = setTagAttribute(tag, "id", $("attrId").value.trim());
+    tag = setTagAttribute(tag, "class", $("attrClass").value.trim());
+    const next = source.slice(0, entry.start) + tag + source.slice(entry.end);
+    setSourceValue(next, false);
+    const note = state.notes.get(state.currentId);
+    if (note) note.html = next;
+    state.sourceMap = annotateHtml(next).map;
+    clearSelection();
+    markDirty();
+    schedulePreview(false);
+    scheduleSave();
   }
   function applyStyleObject(changes) {
     if (!state.selectedSrcId) return;
@@ -1043,6 +1165,14 @@ code { font-family: Consolas, "Cascadia Mono", monospace; background: #f1f4f8; p
   function bind() {
     renderStyleControls();
     initSourceEditor();
+    $("formatBtn").addEventListener("click", formatSource);
+    $("imageBtn").addEventListener("click", () => $("imageInput").click());
+    $("imageInput").addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (file) await handleImageFile(file).catch(showError);
+    });
+    $("applyAttrsBtn").addEventListener("click", applyAttributes);
     $("notebookTitle").addEventListener("input", () => {
       if (!state.manifest) return;
       state.manifest.title = $("notebookTitle").value.trim() || "未命名笔记本";

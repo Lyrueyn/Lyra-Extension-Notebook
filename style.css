@@ -169,3 +169,7 @@ li.CodeMirror-hint-active { background: #1d4d66; color: #ffffff; }
 .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .action-row button { width: 100%; }
 select:disabled, input:disabled, button:disabled { opacity: .45; cursor: default; }
+
+.source-actions { display: flex; align-items: center; gap: 5px; }
+.source-actions button { padding: 3px 7px; font-size: 11px; }
+.source-actions .pane-meta { margin-right: 3px; }
