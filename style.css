@@ -101,3 +101,10 @@ button.ghost:hover { border-color: var(--accent); color: var(--accent); }
 .mode { border: 0; background: transparent; color: var(--muted); padding: 4px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .mode.active { background: #1d3446; color: var(--accent); font-weight: 600; }
 .read-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #ffffff; }
+
+.icon-btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; min-width: 26px; height: 26px; padding: 0 6px; font-size: 12px; cursor: pointer; }
+.icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.read-controls { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
+.read-font-label { min-width: 20px; text-align: center; color: var(--muted); font-size: 11px; }
+.mini-select { background: #101722; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 5px; font-size: 11px; outline: none; }
+@media (max-width: 1100px) { .read-controls { display: none !important; } }

@@ -16,10 +16,28 @@
       <div class="notes">
         <select id="noteSelect" class="note-select" title="切换笔记"></select>
         <input id="noteTitle" class="note-title" type="text" value="" placeholder="笔记标题" spellcheck="false">
+        <button id="moveNoteUpBtn" class="icon-btn" type="button" title="笔记上移">↑</button>
+        <button id="moveNoteDownBtn" class="icon-btn" type="button" title="笔记下移">↓</button>
+        <button id="duplicateNoteBtn" class="icon-btn" type="button" title="复制笔记">⧉</button>
         <button id="newNoteBtn" class="ghost" type="button">＋ 笔记</button>
         <button id="deleteNoteBtn" class="ghost" type="button">删除</button>
       </div>
       <div class="toolbar">
+        <div id="readControls" class="read-controls" hidden>
+          <button id="readFontDownBtn" class="icon-btn" type="button" title="字号减小">A−</button>
+          <span id="readFontLabel" class="read-font-label">16</span>
+          <button id="readFontUpBtn" class="icon-btn" type="button" title="字号增大">A+</button>
+          <select id="readTheme" class="mini-select" title="阅读主题">
+            <option value="light">浅色</option>
+            <option value="sepia">护眼</option>
+            <option value="dark">深色</option>
+          </select>
+          <select id="readWidth" class="mini-select" title="阅读宽度">
+            <option value="680">窄</option>
+            <option value="860">中</option>
+            <option value="1100">宽</option>
+          </select>
+        </div>
         <div class="mode-switch">
           <button id="editModeBtn" class="mode active" type="button">编辑</button>
           <button id="readModeBtn" class="mode" type="button">阅读</button>

@@ -17,6 +17,7 @@
     assets: new Map(),
     currentId: "",
     mode: "edit",
+    reading: { fontSize: 16, theme: "light", width: 860 },
     dirty: false,
     saveTimer: 0,
     saveInFlight: false,
@@ -347,17 +348,49 @@ ${value}
   }
 
   // ---------- 阅读模式 ----------
-  const READ_BASE_CSS = `
-    html { min-height: 100%; }
-    body { margin: 0; padding: 24px; background: #fff; color: #1f2937;
-      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.65; }
-    img, video, canvas, svg { max-width: 100%; min-width: 0; height: auto; }
-    pre { white-space: pre-wrap; word-break: break-word; }
-    a { color: #138fc9; }
-  `;
+  const READING_THEMES = {
+    light: { bg: "#ffffff", text: "#1f2937", muted: "#6b7280", link: "#138fc9", code: "#f1f5f9" },
+    sepia: { bg: "#f6ecd9", text: "#4b3a2a", muted: "#8a7359", link: "#8a5a2b", code: "#efe2ca" },
+    dark: { bg: "#151a20", text: "#dbe7f5", muted: "#8fa3bc", link: "#66ccff", code: "#202b38" },
+  };
+  function loadReadingSettings() {
+    const saved = state.manifest && state.manifest.settings && state.manifest.settings.reading;
+    state.reading = Object.assign({ fontSize: 16, theme: "light", width: 860 }, saved || {});
+    state.reading.fontSize = Math.max(12, Math.min(28, Number(state.reading.fontSize) || 16));
+    state.reading.width = Math.max(480, Math.min(1400, Number(state.reading.width) || 860));
+    if (!READING_THEMES[state.reading.theme]) state.reading.theme = "light";
+  }
+  function saveReadingSettings() {
+    if (!state.manifest) return;
+    state.manifest.settings = state.manifest.settings || {};
+    state.manifest.settings.reading = Object.assign({}, state.reading);
+    markDirty();
+  }
+  function readBaseCss() {
+    const t = READING_THEMES[state.reading.theme] || READING_THEMES.light;
+    return `
+      html { min-height: 100%; background: ${t.bg}; }
+      body { max-width: ${state.reading.width}px; margin: 0 auto; padding: 28px 32px 64px;
+        background: ${t.bg} !important; color: ${t.text} !important;
+        font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        font-size: ${state.reading.fontSize}px !important; line-height: 1.75; }
+      img, video, canvas, svg { max-width: 100%; min-width: 0; height: auto; }
+      pre { white-space: pre-wrap; word-break: break-word; background: ${t.code}; padding: 12px; border-radius: 6px; }
+      a { color: ${t.link} !important; }
+      blockquote { border-left: 3px solid ${t.link}; margin-left: 0; padding-left: 14px; color: ${t.muted}; }
+      h1, h2, h3, h4, h5, h6 { line-height: 1.35; }
+      @media (max-width: 720px) { body { padding: 18px 16px 48px; } }
+    `;
+  }
+  function updateReadControls() {
+    if (!$("readFontLabel")) return;
+    $("readFontLabel").textContent = String(state.reading.fontSize);
+    $("readTheme").value = state.reading.theme;
+    $("readWidth").value = String(state.reading.width);
+  }
   function wrapReadDocument(html, title) {
     const doc = ensureFullHtml(html || "", title);
-    const style = "<style data-lyra-reader>" + READ_BASE_CSS + "</style>";
+    const style = "<style data-lyra-reader>" + readBaseCss() + "</style>";
     if (/<head[\s>]/i.test(doc)) return doc.replace(/<head([^>]*)>/i, "<head$1>" + style);
     if (/<html[\s>]/i.test(doc)) return doc.replace(/<html([^>]*)>/i, "<html$1><head>" + style + "</head>");
     return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">" + style + "</head><body>" + doc + "</body></html>";
@@ -385,6 +418,7 @@ ${value}
   function updateModeButtons() {
     $("editModeBtn").classList.toggle("active", state.mode === "edit");
     $("readModeBtn").classList.toggle("active", state.mode === "read");
+    $("readControls").hidden = state.mode !== "read";
   }
   async function setMode(mode) {
     if (mode === state.mode) return;
@@ -456,6 +490,48 @@ ${value}
     markDirty();
   }
 
+  function replaceDocTitle(html, title) {
+    const safe = escapeHtml(title || "笔记");
+    if (/<title>[\s\S]*?<\/title>/i.test(html)) return html.replace(/<title>[\s\S]*?<\/title>/i, "<title>" + safe + "</title>");
+    if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, "<head$1><title>" + safe + "</title>");
+    return html;
+  }
+  async function moveNote(delta) {
+    const ids = [...state.notes.keys()];
+    const index = ids.indexOf(state.currentId);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    await flushEditor();
+    const entries = [...state.notes.entries()];
+    const tmp = entries[index];
+    entries[index] = entries[target];
+    entries[target] = tmp;
+    state.notes = new Map(entries);
+    if (state.manifest) state.manifest.notes = entries.map((e) => e[1].meta);
+    refreshNoteSelect();
+    markDirty();
+  }
+  async function duplicateNote() {
+    await flushEditor();
+    const source = state.notes.get(state.currentId);
+    if (!source) return;
+    const now = nowIso();
+    const title = (source.meta.title || "未命名笔记") + " 副本";
+    const meta = Object.assign({}, source.meta, { id: uid("note"), title: title, createdAt: now, updatedAt: now });
+    let html = ensureFullHtml(source.html, title);
+    html = replaceDocTitle(html, title);
+    const copy = { meta: meta, html: html };
+    const entries = [...state.notes.entries()];
+    const index = entries.findIndex((e) => e[0] === state.currentId);
+    entries.splice(index + 1, 0, [meta.id, copy]);
+    state.notes = new Map(entries);
+    state.currentId = meta.id;
+    refreshNoteSelect();
+    if (state.mode === "read") renderRead();
+    else sendCurrentDocument();
+    markDirty();
+  }
+
   // ---------- 启动 ----------
   async function init() {
     $("notebookTitle").addEventListener("input", () => {
@@ -471,6 +547,9 @@ ${value}
       refreshNoteSelect();
     });
     $("noteSelect").addEventListener("change", (e) => switchNote(e.target.value).catch(showError));
+    $("moveNoteUpBtn").addEventListener("click", () => moveNote(-1).catch(showError));
+    $("moveNoteDownBtn").addEventListener("click", () => moveNote(1).catch(showError));
+    $("duplicateNoteBtn").addEventListener("click", () => duplicateNote().catch(showError));
     $("newNoteBtn").addEventListener("click", () => addNote().catch(showError));
     $("deleteNoteBtn").addEventListener("click", () => deleteNote().catch(showError));
     $("saveBtn").addEventListener("click", async () => {
@@ -480,6 +559,20 @@ ${value}
     $("errorClose").addEventListener("click", () => { $("errorMask").hidden = true; });
     $("editModeBtn").addEventListener("click", () => setMode("edit").catch(showError));
     $("readModeBtn").addEventListener("click", () => setMode("read").catch(showError));
+    $("readFontDownBtn").addEventListener("click", () => {
+      state.reading.fontSize = Math.max(12, state.reading.fontSize - 2);
+      updateReadControls(); saveReadingSettings(); if (state.mode === "read") renderRead();
+    });
+    $("readFontUpBtn").addEventListener("click", () => {
+      state.reading.fontSize = Math.min(28, state.reading.fontSize + 2);
+      updateReadControls(); saveReadingSettings(); if (state.mode === "read") renderRead();
+    });
+    $("readTheme").addEventListener("change", () => {
+      state.reading.theme = $("readTheme").value; saveReadingSettings(); if (state.mode === "read") renderRead();
+    });
+    $("readWidth").addEventListener("change", () => {
+      state.reading.width = Number($("readWidth").value) || 860; saveReadingSettings(); if (state.mode === "read") renderRead();
+    });
 
     window.addEventListener("message", (event) => {
       const frame = $("editorFrame");
@@ -516,9 +609,11 @@ ${value}
       } else {
         await loadPackage(base64ToBytes(res.data));
       }
+      loadReadingSettings();
       refreshNoteSelect();
       ensureEditor();
       updateModeButtons();
+      updateReadControls();
       setStatus("已保存");
       if (host) host.postMessage({ type: "host.ready" });
       if (!res.data) await saveNow();
