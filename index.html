@@ -20,12 +20,17 @@
         <button id="deleteNoteBtn" class="ghost" type="button">删除</button>
       </div>
       <div class="toolbar">
+        <div class="mode-switch">
+          <button id="editModeBtn" class="mode active" type="button">编辑</button>
+          <button id="readModeBtn" class="mode" type="button">阅读</button>
+        </div>
         <span id="saveState" class="save-state">已保存</span>
         <button id="saveBtn" class="ghost" type="button">保存</button>
       </div>
     </header>
     <main class="content">
       <iframe id="editorFrame" class="editor-frame" title="HTML 编辑器"></iframe>
+      <iframe id="readFrame" class="read-frame" title="HTML 阅读" sandbox="allow-same-origin allow-scripts allow-forms allow-modals" hidden></iframe>
     </main>
   </div>
   <div id="errorMask" class="error-mask" hidden>

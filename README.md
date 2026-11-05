@@ -50,3 +50,10 @@ v1 的 `notes/<id>.json` 会在读取时转换为 HTML，下次保存写成 v2�
 ## 许可证
 
 GNU GPL v3.0。
+
+## 2.1.0
+
+- 笔记默认使用完整 HTML 文档：`<!DOCTYPE html>` + `html/head/meta/title/style/body`。
+- 旧笔记的 HTML 片段加载时自动补全为完整文档，保存时写回完整文档。
+- 顶部新增「编辑 / 阅读」切换；阅读模式使用独立 iframe，不显示 DevTool。
+- 阅读模式会把 `.lyrnb` 里的 assets 转成 data URL，图片正常显示。

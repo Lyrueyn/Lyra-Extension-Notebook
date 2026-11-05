@@ -16,6 +16,7 @@
     notes: new Map(),
     assets: new Map(),
     currentId: "",
+    mode: "edit",
     dirty: false,
     saveTimer: 0,
     saveInFlight: false,
@@ -120,8 +121,34 @@
   }
 
 
+  function ensureFullHtml(html, title) {
+    const value = String(html || "");
+    if (/<html[\s>]/i.test(value)) return value;
+    const safeTitle = escapeHtml(title || "笔记");
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>${safeTitle}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      color: #1f2937;
+      background: #ffffff;
+      line-height: 1.65;
+    }
+    img, video, canvas, svg { max-width: 100%; min-width: 0; height: auto; }
+  </style>
+</head>
+<body>
+${value}
+</body>
+</html>`;
+  }
   function defaultHtml(title) {
-    return "<h1>" + escapeHtml(title || "新笔记") + "</h1>\n<p>左边写 HTML，中间实时预览，右边检查元素并调整样式。</p>\n";
+    return ensureFullHtml("<h1>" + escapeHtml(title || "新笔记") + "</h1>\n<p>左边写 HTML，中间实时预览，右边检查元素并调整样式。</p>", title);
   }
   function defaultNote(title) {
     const now = nowIso();
@@ -203,7 +230,7 @@
       } else {
         html = defaultHtml(meta.title);
       }
-      notes.set(meta.id, { meta: Object.assign({}, meta), html: html });
+      notes.set(meta.id, { meta: Object.assign({}, meta), html: ensureFullHtml(html, meta.title) });
     }
     if (notes.size === 0) {
       const note = defaultNote("新笔记");
@@ -319,6 +346,66 @@
     });
   }
 
+  // ---------- 阅读模式 ----------
+  const READ_BASE_CSS = `
+    html { min-height: 100%; }
+    body { margin: 0; padding: 24px; background: #fff; color: #1f2937;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; line-height: 1.65; }
+    img, video, canvas, svg { max-width: 100%; min-width: 0; height: auto; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    a { color: #138fc9; }
+  `;
+  function wrapReadDocument(html, title) {
+    const doc = ensureFullHtml(html || "", title);
+    const style = "<style data-lyra-reader>" + READ_BASE_CSS + "</style>";
+    if (/<head[\s>]/i.test(doc)) return doc.replace(/<head([^>]*)>/i, "<head$1>" + style);
+    if (/<html[\s>]/i.test(doc)) return doc.replace(/<html([^>]*)>/i, "<html$1><head>" + style + "</head>");
+    return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">" + style + "</head><body>" + doc + "</body></html>";
+  }
+  function assetDataUrl(path) {
+    const clean = String(path || "").replace(/^\.\//, "");
+    for (const asset of state.assets.values()) {
+      if (asset.path === clean || asset.path === path) {
+        if (asset.base64) return "data:" + (asset.mime || "application/octet-stream") + ";base64," + asset.base64;
+      }
+    }
+    return "";
+  }
+  function replaceAssetSources(html) {
+    return String(html || "").replace(/(<img\b[^>]*?\bsrc=)(["'])([^"']+)\2/gi, (match, prefix, quote, url) => {
+      const data = assetDataUrl(url);
+      return data ? prefix + quote + data + quote : match;
+    });
+  }
+  function renderRead() {
+    const note = state.notes.get(state.currentId);
+    if (!note) return;
+    $("readFrame").srcdoc = replaceAssetSources(wrapReadDocument(note.html, note.meta.title));
+  }
+  function updateModeButtons() {
+    $("editModeBtn").classList.toggle("active", state.mode === "edit");
+    $("readModeBtn").classList.toggle("active", state.mode === "read");
+  }
+  async function setMode(mode) {
+    if (mode === state.mode) return;
+    if (mode === "read") {
+      await flushEditor();
+      if (state.dirty) await saveNow().catch(() => {});
+      state.mode = "read";
+      $("editorFrame").hidden = true;
+      $("readFrame").hidden = false;
+      renderRead();
+      setStatus("阅读模式");
+    } else {
+      state.mode = "edit";
+      $("readFrame").hidden = true;
+      $("editorFrame").hidden = false;
+      sendCurrentDocument();
+      setStatus("编辑模式");
+    }
+    updateModeButtons();
+  }
+
   // ---------- 笔记列表 ----------
   function refreshNoteSelect() {
     const select = $("noteSelect");
@@ -342,7 +429,8 @@
     if (state.dirty) await saveNow().catch(() => {});
     state.currentId = id;
     refreshNoteSelect();
-    sendCurrentDocument();
+    if (state.mode === "read") renderRead();
+    else sendCurrentDocument();
   }
   async function addNote() {
     await flushEditor();
@@ -351,7 +439,8 @@
     state.notes.set(note.meta.id, note);
     state.currentId = note.meta.id;
     refreshNoteSelect();
-    sendCurrentDocument();
+    if (state.mode === "read") renderRead();
+    else sendCurrentDocument();
     markDirty();
   }
   async function deleteNote() {
@@ -362,7 +451,8 @@
     state.notes.delete(state.currentId);
     state.currentId = [...state.notes.keys()][0];
     refreshNoteSelect();
-    sendCurrentDocument();
+    if (state.mode === "read") renderRead();
+    else sendCurrentDocument();
     markDirty();
   }
 
@@ -388,6 +478,8 @@
       await saveNow().catch(showError);
     });
     $("errorClose").addEventListener("click", () => { $("errorMask").hidden = true; });
+    $("editModeBtn").addEventListener("click", () => setMode("edit").catch(showError));
+    $("readModeBtn").addEventListener("click", () => setMode("read").catch(showError));
 
     window.addEventListener("message", (event) => {
       const frame = $("editorFrame");
@@ -426,6 +518,7 @@
       }
       refreshNoteSelect();
       ensureEditor();
+      updateModeButtons();
       setStatus("已保存");
       if (host) host.postMessage({ type: "host.ready" });
       if (!res.data) await saveNow();
