@@ -1,11 +1,12 @@
-﻿{
+{
   "id": "notebook",
   "name": "笔记本",
-  "version": "1.14.0",
+  "version": "2.0.0",
   "entry": "index.html",
-  "description": "HTML 笔记本：CodeMirror 源码高亮/补全 + 实时预览 + 95 项 Dev Tool 调参 + CSS 规则 + DOM Tree + 图片替换/引用检查 + 响应式预览 + DOM 节点重命名/删除 + 源码光标联动 + 全量 CSS 补全 + 格式化排版 + DevTool 整理 + 父级选择 + flex 图片自适应 + 高亮顶层覆盖 + DOM 结构编辑。",
+  "description": "HTML 笔记本 2.0：多笔记 .lyrnb 容器；阅读/编辑能力来自 HTML_Reader 与 HTML_Editor 层。",
   "kind": "notebook",
   "fileTypes": [".lyrnb"],
+  "requires": ["html-reader", "html-editor"],
   "host": {
     "innerName": "notebook.lyrnb",
     "fileParam": "notebook",
