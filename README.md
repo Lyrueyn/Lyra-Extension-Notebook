@@ -71,3 +71,7 @@ GNU GPL v3.0。
 ## 2.3.1
 
 - 编辑器 iframe 增加版本 query，避免加载缓存的旧 HTML_Editor。
+
+## 2.3.2
+
+- 编辑器 iframe 缓存版本更新到 140，加载 HTML_Editor 1.4.0。
