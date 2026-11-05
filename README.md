@@ -79,3 +79,7 @@ GNU GPL v3.0。
 ## 2.3.3
 
 - 编辑器缓存版本更新到 150，加载 HTML_Editor 1.5.0。
+
+## 2.3.17
+
+- 编辑/阅读 iframe 增加 allow="autoplay"；编辑器缓存 280。
