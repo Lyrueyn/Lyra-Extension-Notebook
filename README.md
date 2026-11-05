@@ -67,3 +67,7 @@ GNU GPL v3.0。
 
 - 阅读模式不再注入字号、主题、宽度或 body 样式；完整 HTML 原样渲染，`body` 自己的 `color`、`width`、字体全部保留。
 - 移除阅读调字号/主题/宽度控件。
+
+## 2.3.1
+
+- 编辑器 iframe 增加版本 query，避免加载缓存的旧 HTML_Editor。

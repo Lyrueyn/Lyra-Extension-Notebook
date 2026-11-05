@@ -1,7 +1,7 @@
 ﻿{
   "id": "notebook",
   "name": "笔记本",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "entry": "index.html",
   "description": "HTML 笔记本 2.0：多笔记 .lyrnb 容器；阅读/编辑能力来自 HTML_Reader 与 HTML_Editor 层。",
   "kind": "notebook",
