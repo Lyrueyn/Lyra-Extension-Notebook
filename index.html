@@ -15,6 +15,10 @@
       </div>
       <div class="notes">
         <select id="noteSelect" class="note-select" title="切换笔记"></select>
+        <div class="note-search-wrap">
+          <input id="noteSearch" class="note-search" type="text" placeholder="搜索笔记…" spellcheck="false" autocomplete="off"/>
+          <div id="noteSearchResults" class="note-search-results" hidden></div>
+        </div>
         <input id="noteTitle" class="note-title" type="text" value="" placeholder="笔记标题" spellcheck="false">
         <button id="moveNoteUpBtn" class="icon-btn" type="button" title="笔记上移">↑</button>
         <button id="moveNoteDownBtn" class="icon-btn" type="button" title="笔记下移">↓</button>

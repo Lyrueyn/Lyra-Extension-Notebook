@@ -393,6 +393,76 @@ ${value}
   }
 
   // ---------- 笔记列表 ----------
+  function notePlainText(note) {
+    try {
+      const box = document.createElement("div");
+      box.innerHTML = String((note && note.html) || "");
+      return (box.textContent || "").replace(/\s+/g, " ").trim();
+    } catch { return ""; }
+  }
+  function highlightSearchText(text, query) {
+    const source = String(text || "");
+    const needle = String(query || "");
+    if (!needle) return document.createTextNode(source);
+    const at = source.toLowerCase().indexOf(needle.toLowerCase());
+    if (at < 0) return document.createTextNode(source);
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(document.createTextNode(source.slice(0, at)));
+    const mark = document.createElement("mark");
+    mark.textContent = source.slice(at, at + needle.length);
+    fragment.appendChild(mark);
+    fragment.appendChild(document.createTextNode(source.slice(at + needle.length)));
+    return fragment;
+  }
+  function searchNotes(query) {
+    const value = String(query || "").trim();
+    const host = $("noteSearchResults");
+    if (!host) return;
+    if (!value) { host.hidden = true; host.innerHTML = ""; return; }
+    const q = value.toLowerCase();
+    const results = [];
+    for (const [id, note] of state.notes.entries()) {
+      const title = (note.meta && note.meta.title) || "未命名笔记";
+      const plain = notePlainText(note);
+      const titleHit = title.toLowerCase().indexOf(q) >= 0;
+      const bodyAt = plain.toLowerCase().indexOf(q);
+      if (!titleHit && bodyAt < 0) continue;
+      const snippet = bodyAt >= 0
+        ? plain.slice(Math.max(0, bodyAt - 30), Math.min(plain.length, bodyAt + 90))
+        : plain.slice(0, 120);
+      results.push({ id, title, snippet, titleHit });
+    }
+    results.sort((a, b) => (b.titleHit ? 1 : 0) - (a.titleHit ? 1 : 0) || a.title.localeCompare(b.title));
+    host.innerHTML = "";
+    if (!results.length) {
+      const empty = document.createElement("div");
+      empty.className = "note-search-empty";
+      empty.textContent = "没有匹配的笔记";
+      host.appendChild(empty);
+      host.hidden = false;
+      return;
+    }
+    results.slice(0, 20).forEach((item, index) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "note-search-item" + (index === 0 ? " active" : "");
+      const title = document.createElement("span");
+      title.className = "note-search-title";
+      title.appendChild(highlightSearchText(item.title, value));
+      const snippet = document.createElement("span");
+      snippet.className = "note-search-snippet";
+      snippet.appendChild(highlightSearchText(item.snippet || "(无正文)", value));
+      row.appendChild(title);
+      row.appendChild(snippet);
+      row.addEventListener("click", () => {
+        $("noteSearchResults").hidden = true;
+        switchNote(item.id).catch(showError);
+      });
+      host.appendChild(row);
+    });
+    host.hidden = false;
+  }
+
   function refreshNoteSelect() {
     const select = $("noteSelect");
     const current = state.currentId;
@@ -499,6 +569,18 @@ ${value}
       refreshNoteSelect();
     });
     $("noteSelect").addEventListener("change", (e) => switchNote(e.target.value).catch(showError));
+    let searchTimer = 0;
+    $("noteSearch").addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => searchNotes($("noteSearch").value), 110);
+    });
+    $("noteSearch").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { $("noteSearchResults").hidden = true; $("noteSearch").blur(); }
+      else if (e.key === "Enter") {
+        const first = $("noteSearchResults").querySelector(".note-search-item");
+        if (first) { e.preventDefault(); first.click(); }
+      }
+    });
     $("moveNoteUpBtn").addEventListener("click", () => moveNote(-1).catch(showError));
     $("moveNoteDownBtn").addEventListener("click", () => moveNote(1).catch(showError));
     $("duplicateNoteBtn").addEventListener("click", () => duplicateNote().catch(showError));
@@ -507,6 +589,10 @@ ${value}
     $("saveBtn").addEventListener("click", async () => {
       await flushEditor();
       await saveNow().catch(showError);
+    });
+    document.addEventListener("click", (e) => {
+      const wrap = document.querySelector(".note-search-wrap");
+      if (wrap && !wrap.contains(e.target)) $("noteSearchResults").hidden = true;
     });
     $("errorClose").addEventListener("click", () => { $("errorMask").hidden = true; });
     $("editModeBtn").addEventListener("click", () => setMode("edit").catch(showError));

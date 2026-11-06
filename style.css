@@ -108,3 +108,50 @@ button.ghost:hover { border-color: var(--accent); color: var(--accent); }
 .read-font-label { min-width: 20px; text-align: center; color: var(--muted); font-size: 11px; }
 .mini-select { background: #101722; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 5px; font-size: 11px; outline: none; }
 @media (max-width: 1100px) { .read-controls { display: none !important; } }
+
+
+/* Notebook search */
+.note-search-wrap { position: relative; flex: 0 1 190px; min-width: 120px; }
+.note-search {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.note-search:focus { border-color: var(--accent); }
+.note-search-results {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  left: 0;
+  width: 320px;
+  max-width: 80vw;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(15, 35, 60, .20);
+  padding: 5px;
+}
+.note-search-results[hidden] { display: none; }
+.note-search-empty { color: var(--muted); font-size: 11px; padding: 9px; }
+.note-search-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.note-search-item:hover, .note-search-item.active { background: #eaf5fc; }
+.note-search-title { display: block; font-size: 12px; font-weight: 600; color: #1f2937; }
+.note-search-snippet { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-search-snippet mark { background: #ffe58a; color: #4a3700; border-radius: 2px; padding: 0 1px; }
